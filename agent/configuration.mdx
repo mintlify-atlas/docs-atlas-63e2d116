@@ -1,0 +1,314 @@
+---
+title: 'Agent Configuration'
+description: 'Configure environment variables, models, and security settings for the BigQuery Agent'
+---
+
+## Environment Variables
+
+The agent reads configuration from environment variables with sensible defaults defined in `agent.py:10-18`.
+
+### Project and Dataset Configuration
+
+<ParamField path="PROJECT_ID" type="string" default="datawarehouse-des">
+  The Google Cloud project ID containing the BigQuery datasets.
+  
+  ```python
+  PROJECT_ID = os.getenv("PROJECT_ID", "datawarehouse-des")
+  ```
+</ParamField>
+
+<ParamField path="BIGQUERY_DATASET" type="string" default="STG_ACTIVOS">
+  The target BigQuery dataset for agent queries.
+  
+  ```python
+  BIGQUERY_DATASET = os.getenv("BIGQUERY_DATASET", "STG_ACTIVOS")
+  ```
+</ParamField>
+
+<ParamField path="GOOGLE_CLOUD_LOCATION" type="string" default="us-east4">
+  The Google Cloud region for Vertex AI operations.
+  
+  ```python
+  GOOGLE_CLOUD_LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-east4")
+  ```
+</ParamField>
+
+<ParamField path="NOMBRE_EMPRESA" type="string" default="TRANSELEC S.A.">
+  The organization name used in security rejection messages.
+  
+  ```python
+  NOMBRE_EMPRESA = os.getenv("NOMBRE_EMPRESA", "TRANSELEC S.A.")
+  ```
+</ParamField>
+
+### Model Configuration
+
+<ParamField path="ANALYTICS_AGENT_MODEL" type="string" default="gemini-2.5-pro">
+  Legacy model configuration variable (retained for compatibility).
+  
+  ```python
+  ANALYTICS_AGENT_MODEL = os.getenv("ANALYTICS_AGENT_MODEL", "gemini-2.5-pro")
+  ```
+</ParamField>
+
+<ParamField path="LLM_1_NAME" type="string" default="bigquery_agent_stg_activos">
+  The internal name identifier for the agent.
+  
+  ```python
+  LLM_1_NAME = os.getenv("LLM_1_NAME", "bigquery_agent_stg_activos")
+  ```
+</ParamField>
+
+<ParamField path="LLM_1_MODELO" type="string" default="gemini-2.5-pro">
+  The Vertex AI model used by the agent. This is the active model configuration.
+  
+  ```python
+  LLM_1_MODELO = os.getenv("LLM_1_MODELO", "gemini-2.5-pro")
+  ```
+</ParamField>
+
+## Model Configuration
+
+The agent uses **Gemini 2.5 Pro** as the default language model.
+
+### Supported Models
+
+While `gemini-2.5-pro` is the default, you can configure any Vertex AI model by setting the `LLM_1_MODELO` environment variable:
+
+<CodeGroup>
+```bash Production
+export LLM_1_MODELO="gemini-2.5-pro"
+```
+
+```bash Experimental
+export LLM_1_MODELO="gemini-2.5-flash"
+```
+
+```bash Custom
+export LLM_1_MODELO="gemini-1.5-pro-002"
+```
+</CodeGroup>
+
+### Model Selection Criteria
+
+<Note>
+When choosing a model, consider:
+- **Gemini 2.5 Pro**: Best for complex SQL generation and reasoning
+- **Gemini 2.5 Flash**: Faster responses, suitable for simpler queries
+- **Gemini 1.5 Pro**: Balance of performance and cost
+</Note>
+
+## Tool Configuration
+
+The agent's BigQuery integration is configured with strict security controls.
+
+### BigQueryToolConfig
+
+Defined in `agent.py:24-26`:
+
+```python
+tool_config = BigQueryToolConfig(
+    write_mode=WriteMode.BLOCKED,
+)
+```
+
+<ParamField path="write_mode" type="WriteMode" default="WriteMode.BLOCKED">
+  Controls write access to BigQuery. Set to `WriteMode.BLOCKED` to enforce read-only operations.
+</ParamField>
+
+### WriteMode Options
+
+The `WriteMode` enum provides the following security levels:
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| `WriteMode.BLOCKED` | **Prevents all write operations** | Production analytics (current setting) |
+| `WriteMode.ALLOWED` | Permits write operations | Development/testing environments |
+
+<Warning>
+**Security Critical**: The agent is configured with `WriteMode.BLOCKED` to prevent any data modification. Changing this setting could compromise data integrity.
+</Warning>
+
+### Tool Integration
+
+The configured tool is passed to the agent:
+
+```python
+root_agent = LlmAgent(
+    model=LLM_1_MODELO, 
+    name=LLM_1_NAME,
+    description="Agente para responder preguntas sobre datos y modelos de BigQuery",
+    instruction=new_instruction,
+    tools=[bigquery_toolset]  # ← Tool configuration applied here
+)
+```
+
+## Customizing the Instruction Prompt
+
+The agent's behavior is primarily controlled by the instruction prompt. You can customize it by modifying the `new_instruction` variable in `agent.py:38-68`.
+
+### Current Instruction Structure
+
+<Steps>
+  <Step title="Agent Role Definition">
+    Defines the agent as a SQL generation engine:
+    ```python
+    new_instruction = f"""
+    Eres un motor de generación de SQL para BigQuery.
+    Tu ÚNICO objetivo es traducir lenguaje natural a código SQL válido...
+    """
+    ```
+  </Step>
+  
+  <Step title="Security Guardrails">
+    Specifies prohibited commands and rejection behavior:
+    ```xml
+    <SECURITY_GUARDRAILS>
+      1. MODO ESTRICTO: READ-ONLY.
+      2. COMANDOS PROHIBIDOS: DROP, DELETE, UPDATE, INSERT...
+    </SECURITY_GUARDRAILS>
+    ```
+  </Step>
+  
+  <Step title="Operational Instructions">
+    Defines tool usage and output format requirements:
+    ```xml
+    <INSTRUCTIONS>
+      - Tienes acceso a `bigquery_toolset`.
+      - Tu prioridad absoluta es la sintaxis correcta...
+    </INSTRUCTIONS>
+    ```
+  </Step>
+</Steps>
+
+### Customization Examples
+
+<Accordion title="Add Industry-Specific Context">
+```python
+new_instruction = f"""
+Eres un motor de generación de SQL para BigQuery especializado en datos del sector eléctrico.
+Tu ÚNICO objetivo es traducir lenguaje natural a código SQL válido para el proyecto **{PROJECT_ID}**, dataset **{BIGQUERY_DATASET}**.
+
+Contexto del dominio:
+- Los datos provienen de operaciones de transmisión eléctrica
+- Las tablas contienen información de activos, mantenimiento y operaciones
+- Los usuarios son analistas de ingeniería y operaciones
+
+<SECURITY_GUARDRAILS>
+  # ... rest of the prompt
+"""
+```
+</Accordion>
+
+<Accordion title="Modify Output Format">
+```python
+new_instruction = f"""
+# ... existing prompt sections ...
+
+FORMATO DE RESPUESTA ACEPTADO:
+```sql
+-- Query generated for: [user question]
+SELECT ...
+```
+
+Incluye un comentario breve con la pregunta del usuario.
+"""
+```
+</Accordion>
+
+<Accordion title="Add Query Optimization Guidance">
+```python
+new_instruction = f"""
+# ... existing prompt sections ...
+
+<OPTIMIZATION_RULES>
+  - Usa particiones de fecha cuando estén disponibles
+  - Limita resultados con LIMIT cuando sea apropiado
+  - Prefiere agregaciones sobre datos completos
+  - Evita SELECT * en producción
+</OPTIMIZATION_RULES>
+"""
+```
+</Accordion>
+
+## Configuration Best Practices
+
+<Steps>
+  <Step title="Use Environment Variables">
+    Never hardcode configuration values. Always use environment variables for:
+    - Project IDs and dataset names
+    - Model selection
+    - Region configuration
+    - Organization names
+  </Step>
+  
+  <Step title="Maintain Security Defaults">
+    Keep `WriteMode.BLOCKED` in production environments:
+    ```python
+    tool_config = BigQueryToolConfig(
+        write_mode=WriteMode.BLOCKED,  # ← Never change this in production
+    )
+    ```
+  </Step>
+  
+  <Step title="Test Instruction Changes">
+    When modifying the instruction prompt:
+    1. Test with diverse query types
+    2. Verify security guardrails still work
+    3. Ensure output format remains consistent
+    4. Check that tool usage is still correct
+  </Step>
+  
+  <Step title="Document Custom Configuration">
+    If you modify defaults, document:
+    - What was changed and why
+    - Expected behavior differences
+    - Any new environment variables
+  </Step>
+</Steps>
+
+## Example Configuration File
+
+For deployment, create a `.env` file:
+
+<CodeGroup>
+```bash Production
+# Project Configuration
+PROJECT_ID=datawarehouse-prod
+BIGQUERY_DATASET=STG_ACTIVOS
+GOOGLE_CLOUD_LOCATION=us-east4
+NOMBRE_EMPRESA=TRANSELEC S.A.
+
+# Model Configuration
+LLM_1_NAME=bigquery_agent_stg_activos
+LLM_1_MODELO=gemini-2.5-pro
+```
+
+```bash Development
+# Project Configuration
+PROJECT_ID=datawarehouse-dev
+BIGQUERY_DATASET=STG_ACTIVOS_DEV
+GOOGLE_CLOUD_LOCATION=us-east4
+NOMBRE_EMPRESA=TRANSELEC S.A.
+
+# Model Configuration
+LLM_1_NAME=bigquery_agent_dev
+LLM_1_MODELO=gemini-2.5-flash
+```
+
+```bash Testing
+# Project Configuration
+PROJECT_ID=datawarehouse-test
+BIGQUERY_DATASET=STG_ACTIVOS_TEST
+GOOGLE_CLOUD_LOCATION=us-central1
+NOMBRE_EMPRESA=TRANSELEC S.A.
+
+# Model Configuration
+LLM_1_NAME=bigquery_agent_test
+LLM_1_MODELO=gemini-1.5-pro-002
+```
+</CodeGroup>
+
+<Note>
+Load environment variables using `python-dotenv` (already included in `requirements.txt`).
+</Note>

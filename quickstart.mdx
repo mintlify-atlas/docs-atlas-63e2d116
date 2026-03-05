@@ -1,80 +1,249 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Get MABQ running locally in 5 minutes
 ---
 
-## Get started in three steps
+# Quickstart Guide
 
-Get your documentation site running locally and make your first customization.
+Get the MABQ BigQuery Agent running locally and test natural language SQL queries with BigQuery.
 
-### Step 1: Set up your local environment
+## Prerequisites
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
+Before you begin, ensure you have:
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Python 3.11+" icon="python">
+    Required for the backend agent
+  </Card>
+  <Card title="Node.js 20+" icon="node-js">
+    Required for the Next.js frontend
+  </Card>
+  <Card title="Google Cloud Account" icon="google">
+    With BigQuery and Vertex AI enabled
+  </Card>
+  <Card title="Azure AD Tenant" icon="microsoft">
+    For authentication (optional for local testing)
+  </Card>
 </CardGroup>
 
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>
+## Setup Steps
+
+<Steps>
+  <Step title="Clone the Repository">
+    Clone the MABQ repository to your local machine:
+    
+    ```bash
+    git clone https://github.com/Fbozou/pruebas-adk.git
+    cd pruebas-adk
+    ```
+  </Step>
+
+  <Step title="Configure Backend">
+    Navigate to the backend directory and install dependencies:
+    
+    ```bash
+    cd POC_ADK
+    pip install -r requirements.txt
+    ```
+
+    The key dependencies include:
+    - `google-adk>=0.7.0` - Google Agent Development Kit
+    - `google-cloud-aiplatform[adk]>=1.125.0` - Vertex AI integration
+    - `fastapi` - Web framework
+    - `uvicorn` - ASGI server
+    - `PyJWT[crypto]>=2.8.0` - JWT authentication
+  </Step>
+
+  <Step title="Set Backend Environment Variables">
+    Create a `.env` file in the `POC_ADK` directory:
+    
+    ```bash .env
+    # Google Cloud Configuration
+    PROJECT_ID=your-gcp-project-id
+    BIGQUERY_DATASET=your_dataset_name
+    GOOGLE_CLOUD_LOCATION=us-east4
+    
+    # Model Configuration
+    ANALYTICS_AGENT_MODEL=gemini-2.5-pro
+    LLM_1_NAME=bigquery_agent_stg_activos
+    LLM_1_MODELO=gemini-2.5-pro
+    
+    # Company Name (for agent responses)
+    NOMBRE_EMPRESA=Your Company Name
+    
+    # Azure AD Configuration (optional for local testing)
+    AZURE_TENANT_ID=your-tenant-id
+    AZURE_CLIENT_ID=your-client-id
+    
+    # Frontend URL for CORS
+    FRONTEND_URL=http://localhost:3000
+    ```
+
+    <Info>
+    For local development without Azure AD, you can bypass authentication by commenting out the middleware in `main.py`.
+    </Info>
+  </Step>
+
+  <Step title="Authenticate with Google Cloud">
+    Set up Google Cloud credentials for local development:
+    
+    ```bash
+    gcloud auth application-default login
+    gcloud config set project your-gcp-project-id
+    ```
+
+    Ensure your account has the following permissions:
+    - BigQuery Data Viewer
+    - BigQuery Job User
+    - Vertex AI User
+  </Step>
+
+  <Step title="Start the Backend Server">
+    Run the FastAPI backend with uvicorn:
+    
+    ```bash
+    uvicorn main:app --reload --host 0.0.0.0 --port 8000
+    ```
+
+    You should see output like:
+    ```
+    INFO:     Uvicorn running on http://0.0.0.0:8000
+    INFO:     Application startup complete.
+    ```
+
+    <Note>
+    The backend will be available at `http://localhost:8000`. The ADK agent endpoint is mounted at `/`.
+    </Note>
+  </Step>
+
+  <Step title="Configure Frontend">
+    In a new terminal, navigate to the frontend directory:
+    
+    ```bash
+    cd frontend-agente
+    npm install
+    ```
+
+    Key dependencies installed:
+    - `next@16.1.6` - Next.js framework
+    - `@copilotkit/react-core@^1.51.3` - Chat UI framework
+    - `@ag-ui/client@^0.0.44` - ADK HTTP agent
+    - `@microsoft/teams-js@^2.48.1` - Teams integration
+  </Step>
+
+  <Step title="Set Frontend Environment Variables">
+    Create a `.env.local` file in the `frontend-agente` directory:
+    
+    ```bash .env.local
+    NEXT_PUBLIC_API_URL=http://localhost:8000
+    ```
+  </Step>
+
+  <Step title="Start the Frontend">
+    Run the Next.js development server:
+    
+    ```bash
+    npm run dev
+    ```
+
+    The frontend will start at `http://localhost:3000`.
+
+    <Warning>
+    By default, the frontend requires Microsoft Teams context. For local testing outside Teams, you'll need to modify the Teams check in `app/page.tsx`.
+    </Warning>
+  </Step>
+</Steps>
+
+## Test Your Setup
+
+<Steps>
+  <Step title="Access the Application">
+    For local testing without Teams, modify `app/page.tsx` to bypass the Teams check:
+    
+    ```tsx app/page.tsx
+    // Comment out the Teams restriction for local testing
+    if (isTeams === false) {
+      // return (
+      //   <div className="flex h-screen items-center justify-center...">
+      //      Acceso Restringido...
+      //   </div>
+      // );
+    }
+    ```
+  </Step>
+
+  <Step title="Ask a Question">
+    Open `http://localhost:3000` in your browser and try these example queries:
+    
+    - "Show me all tables in the dataset"
+    - "What columns are in the [table_name] table?"
+    - "Count the total number of records in [table_name]"
+    - "Show me the top 10 records from [table_name]"
+  </Step>
+
+  <Step title="View the Response">
+    The agent will:
+    1. Translate your question to SQL
+    2. Execute the query against BigQuery
+    3. Return the SQL code and results
+    
+    Example interaction:
+    
+    **You**: "How many assets are in the database?"
+    
+    **Agent**:
+    ```sql
+    SELECT COUNT(*) as total_assets
+    FROM `your-project.your_dataset.assets_table`
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Backend fails to start with authentication errors">
+    If you see JWT validation errors, either:
+    - Set valid `AZURE_TENANT_ID` and `AZURE_CLIENT_ID` in your `.env`
+    - Or comment out the authentication middleware in `main.py:32-108` for local testing
+  </Accordion>
+
+  <Accordion title="Frontend shows 'Acceso Restringido' message">
+    The app is configured for Microsoft Teams by default. To test locally:
+    1. Open `frontend-agente/app/page.tsx`
+    2. Comment out the Teams restriction check (lines 41-47)
+    3. Set a mock auth token or modify the backend to allow unauthenticated requests
+  </Accordion>
+
+  <Accordion title="Agent can't connect to BigQuery">
+    Verify:
+    - `gcloud auth application-default login` was run
+    - `PROJECT_ID` and `BIGQUERY_DATASET` are correct in `.env`
+    - Your GCP account has BigQuery permissions
+    - The dataset exists and contains tables
+  </Accordion>
+
+  <Accordion title="CORS errors when frontend calls backend">
+    Ensure:
+    - `FRONTEND_URL=http://localhost:3000` is set in backend `.env`
+    - The backend CORS middleware is properly configured
+    - Both services are running on the expected ports
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Understand the Architecture" icon="sitemap" href="/architecture">
+    Learn how the components interact
+  </Card>
+  <Card title="Configure the Agent" icon="sliders" href="/agent/configuration">
+    Customize behavior and security settings
+  </Card>
+  <Card title="Deploy to Cloud Run" icon="cloud" href="/deployment/cloud-run">
+    Deploy to production on GCP
+  </Card>
+  <Card title="Set Up Teams Integration" icon="microsoft" href="/frontend/teams-integration">
+    Deploy as a Microsoft Teams app
+  </Card>
+</CardGroup>

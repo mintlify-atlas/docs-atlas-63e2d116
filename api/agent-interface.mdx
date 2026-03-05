@@ -1,0 +1,245 @@
+---
+title: 'Agent Interface'
+description: 'Reference for the BigQuery LlmAgent and its configuration'
+---
+
+## Overview
+
+The MABQ BigQuery Agent is built using Google's Agent Development Kit (ADK) and provides a read-only conversational interface to BigQuery data.
+
+## Agent Configuration
+
+The agent is defined in `data_agente/agent.py` and configured with Vertex AI and BigQuery tools.
+
+### LlmAgent Definition
+
+```python
+from google.adk.agents.llm_agent import LlmAgent
+
+root_agent = LlmAgent(
+    model=LLM_1_MODELO, 
+    name=LLM_1_NAME,
+    description="Agente para responder preguntas sobre datos y modelos de BigQuery",
+    instruction=new_instruction,
+    tools=[bigquery_toolset]
+)
+```
+
+<ParamField path="model" type="string" default="gemini-2.5-pro">
+  Vertex AI model used for natural language understanding and SQL generation
+</ParamField>
+
+<ParamField path="name" type="string" default="bigquery_agent_stg_activos">
+  Identifier for the agent instance
+</ParamField>
+
+<ParamField path="description" type="string">
+  Agent description: "Agente para responder preguntas sobre datos y modelos de BigQuery"
+</ParamField>
+
+<ParamField path="instruction" type="string">
+  System prompt defining agent behavior (see [Agent Instructions](#agent-instructions))
+</ParamField>
+
+<ParamField path="tools" type="list">
+  Array containing the BigQueryToolset for database access
+</ParamField>
+
+## Agent Instructions
+
+The agent follows strict security guardrails and response formatting:
+
+```python
+new_instruction = f"""
+Eres un motor de generación de SQL para BigQuery.
+Tu ÚNICO objetivo es traducir lenguaje natural a código SQL válido para el proyecto **{PROJECT_ID}**, dataset **{BIGQUERY_DATASET}**.
+
+<SECURITY_GUARDRAILS>
+  1. MODO ESTRICTO: READ-ONLY.
+  2. COMANDOS PROHIBIDOS: DROP, DELETE, UPDATE, INSERT, CREATE, ALTER, TRUNCATE, MERGE, GRANT, REVOKE.
+  3. COMPORTAMIENTO: Rechazar cualquier solicitud de modificación de datos.
+</SECURITY_GUARDRAILS>
+
+<INSTRUCTIONS>
+  - Tienes acceso a `bigquery_toolset`.
+  - Prioridad absoluta: sintaxis correcta y nombres de tabla reales.
+</INSTRUCTIONS>
+"""
+```
+
+### Security Guardrails
+
+<Warning>
+  The agent is hardcoded to **READ-ONLY** mode and will reject any DML/DDL operations:
+  - DROP, DELETE, UPDATE, INSERT
+  - CREATE, ALTER, TRUNCATE
+  - MERGE, GRANT, REVOKE
+</Warning>
+
+If a user requests data modification, the agent responds:
+
+> "Lo siento, por seguridad corporativa tengo acceso de solo lectura a los datos de TRANSELEC S.A."
+
+### Response Format
+
+The agent is instructed to return **only SQL code blocks** for data queries:
+
+```sql
+SELECT column1, column2
+FROM `project.dataset.table`
+WHERE condition = true
+LIMIT 10
+```
+
+<Note>
+  The agent is instructed NOT to include explanatory text - only the SQL query.
+</Note>
+
+## BigQuery Toolset
+
+The agent uses the ADK BigQueryToolset with restricted write permissions:
+
+```python
+from google.adk.tools.bigquery import BigQueryCredentialsConfig, BigQueryToolset
+from google.adk.tools.bigquery.config import BigQueryToolConfig, WriteMode
+
+tool_config = BigQueryToolConfig(
+    write_mode=WriteMode.BLOCKED,
+)
+
+credentials, _ = google.auth.default()
+credentials_config = BigQueryCredentialsConfig(credentials=credentials)
+
+bigquery_toolset = BigQueryToolset(
+    credentials_config=credentials_config, 
+    bigquery_tool_config=tool_config
+)
+```
+
+<ParamField path="write_mode" type="WriteMode" default="WriteMode.BLOCKED">
+  Prevents all write operations at the tool level
+</ParamField>
+
+<ParamField path="credentials" type="Credentials">
+  Uses Google Cloud default credentials (service account in Cloud Run)
+</ParamField>
+
+## Getting the Agent
+
+The `get_root_agent()` function returns the configured agent instance:
+
+```python
+def get_root_agent():
+    return root_agent
+```
+
+This function is imported in `main.py` to initialize the ADK wrapper:
+
+```python
+from data_agente.agent import get_root_agent
+
+agente_backend = get_root_agent()
+```
+
+## ADKAgent Wrapper
+
+The agent is wrapped with `ADKAgent` for integration with FastAPI and CopilotKit:
+
+```python
+from ag_ui_adk import ADKAgent
+
+adk_wrapper = ADKAgent(
+    adk_agent=agente_backend, 
+    app_name="transelec-mabq", 
+    user_id="verified-user",
+    use_in_memory_services=True
+)
+```
+
+<ParamField path="adk_agent" type="LlmAgent">
+  The underlying LlmAgent instance
+</ParamField>
+
+<ParamField path="app_name" type="string" default="transelec-mabq">
+  Application identifier for session management
+</ParamField>
+
+<ParamField path="user_id" type="string" default="verified-user">
+  User identifier (static in this implementation)
+</ParamField>
+
+<ParamField path="use_in_memory_services" type="bool" default="true">
+  Enables in-memory session storage instead of external persistence
+</ParamField>
+
+## Environment Variables
+
+<ParamField path="PROJECT_ID" type="string" default="datawarehouse-des">
+  Google Cloud project containing the BigQuery dataset
+</ParamField>
+
+<ParamField path="BIGQUERY_DATASET" type="string" default="STG_ACTIVOS">
+  BigQuery dataset the agent has access to
+</ParamField>
+
+<ParamField path="GOOGLE_CLOUD_LOCATION" type="string" default="us-east4">
+  Region for Vertex AI and BigQuery operations
+</ParamField>
+
+<ParamField path="NOMBRE_EMPRESA" type="string" default="TRANSELEC S.A.">
+  Company name used in agent responses
+</ParamField>
+
+<ParamField path="ANALYTICS_AGENT_MODEL" type="string" default="gemini-2.5-pro">
+  Vertex AI model for the analytics agent
+</ParamField>
+
+<ParamField path="LLM_1_NAME" type="string" default="bigquery_agent_stg_activos">
+  Agent name identifier
+</ParamField>
+
+<ParamField path="LLM_1_MODELO" type="string" default="gemini-2.5-pro">
+  Model version for the LlmAgent
+</ParamField>
+
+## Session Management
+
+The agent uses in-memory session services for conversation state:
+
+```python
+from google.adk.sessions.in_memory_session_service import InMemorySessionService
+
+in_memory_session_service = InMemorySessionService()
+```
+
+<Warning>
+  In-memory sessions are lost on container restart. For production, consider using persistent session storage.
+</Warning>
+
+## Example Usage
+
+### Programmatic Access
+
+```python
+from data_agente.agent import get_root_agent
+
+agent = get_root_agent()
+
+# The agent is now ready to process queries
+# (typically used via ADK endpoint, not called directly)
+```
+
+### Query Flow
+
+1. User sends natural language query
+2. Agent analyzes query with Gemini model
+3. Agent generates SQL using BigQueryToolset
+4. Agent validates SQL syntax
+5. Agent executes query (read-only)
+6. Agent returns SQL code block to user
+
+## Related Documentation
+
+- [FastAPI Endpoints](/api/fastapi-endpoints) - Backend API reference
+- [Authentication](/api/authentication) - Security middleware
+- [HTTP Agent](/api/http-agent) - Frontend connection

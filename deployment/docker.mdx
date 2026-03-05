@@ -1,0 +1,194 @@
+---
+title: Docker Deployment
+description: Learn how to build and run MABQ Agent using Docker containers
+---
+
+MABQ Agent uses Docker for containerized deployments. Both the backend API and frontend are containerized separately using optimized multi-stage builds.
+
+## Backend Dockerfile
+
+The backend uses a lightweight Python 3.11 slim image for optimal performance.
+
+### Dockerfile Overview
+
+```dockerfile
+FROM python:3.11-slim
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+
+ENV PORT 8080
+EXPOSE 8080
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--proxy-headers"]
+```
+
+### Key Configuration Details
+
+<Steps>
+  <Step title="Base Image">
+    The `python:3.11-slim` image provides a minimal Python environment, reducing the container size while maintaining compatibility with all required dependencies.
+  </Step>
+  
+  <Step title="Environment Variables">
+    - `PYTHONDONTWRITEBYTECODE=1` - Prevents Python from writing `.pyc` files
+    - `PYTHONUNBUFFERED=1` - Ensures logs are sent directly to stdout without buffering
+  </Step>
+  
+  <Step title="Port Configuration">
+    The application runs on port 8080 and uses `--proxy-headers` to correctly handle headers from reverse proxies like Google Cloud Run.
+  </Step>
+</Steps>
+
+<Note>
+The `--proxy-headers` flag is crucial for Cloud Run deployments to properly handle `X-Forwarded-*` headers.
+</Note>
+
+### Backend Dependencies
+
+The backend requires the following key dependencies:
+
+```txt
+google-cloud-aiplatform[adk]>=1.125.0
+google-adk>=0.7.0
+ag-ui-adk
+uvicorn
+fastapi
+python-dotenv
+google-auth
+PyJWT[crypto]>=2.8.0
+```
+
+## Frontend Dockerfile
+
+The frontend uses a multi-stage build with Node.js 20 Alpine for an optimized production image.
+
+### Multi-Stage Build
+
+```dockerfile
+# --- Frontend ---
+
+FROM node:20-alpine AS deps
+RUN apk add --no-cache libc6-compat
+WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN npm install
+
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+ENV NEXT_TELEMETRY_DISABLED 1
+
+RUN npm run build
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV production
+ENV NEXT_TELEMETRY_DISABLED 1
+ENV PORT 3000
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+
+USER nextjs
+
+EXPOSE 3000
+ENV PORT 3000
+ENV HOSTNAME "0.0.0.0"
+CMD ["node", "server.js"]
+```
+
+### Build Stages Explained
+
+<Steps>
+  <Step title="Dependencies Stage">
+    The `deps` stage installs all npm dependencies. Using `libc6-compat` ensures compatibility with native Node modules.
+  </Step>
+  
+  <Step title="Builder Stage">
+    The `builder` stage copies dependencies and builds the Next.js application with telemetry disabled for faster builds.
+  </Step>
+  
+  <Step title="Runner Stage">
+    The final `runner` stage creates a minimal production image with only the built assets and runtime dependencies. A non-root `nextjs` user runs the application for security.
+  </Step>
+</Steps>
+
+<Warning>
+The frontend runs as a non-root user (`nextjs:nodejs`) for enhanced security. Ensure file permissions are correctly set if mounting volumes.
+</Warning>
+
+## Building the Containers
+
+<CodeGroup>
+
+```bash Backend
+cd POC_ADK
+docker build -t mabq-backend .
+```
+
+```bash Frontend
+cd frontend-agente
+docker build -t mabq-frontend .
+```
+
+</CodeGroup>
+
+## Running Locally
+
+<CodeGroup>
+
+```bash Backend
+docker run -p 8080:8080 \
+  -e PROJECT_ID=your-project-id \
+  -e BIGQUERY_DATASET=STG_ACTIVOS \
+  -e GOOGLE_CLOUD_LOCATION=us-east4 \
+  -e AZURE_TENANT_ID=your-tenant-id \
+  -e AZURE_CLIENT_ID=your-client-id \
+  -e FRONTEND_URL=http://localhost:3000 \
+  mabq-backend
+```
+
+```bash Frontend
+docker run -p 3000:3000 \
+  -e NEXT_PUBLIC_API_URL=http://localhost:8080 \
+  mabq-frontend
+```
+
+</CodeGroup>
+
+<Note>
+When running locally, ensure you have valid Google Cloud credentials mounted or use Application Default Credentials (ADC).
+</Note>
+
+## Production Considerations
+
+### Backend
+- Mount service account credentials or use Workload Identity
+- Set all required environment variables (see [Environment Variables](/deployment/environment-variables))
+- Use health check endpoints for container orchestration
+- Enable logging with structured output
+
+### Frontend
+- Configure `NEXT_PUBLIC_API_URL` to point to your backend
+- Use HTTPS in production
+- Consider using a CDN for static assets
+- Set appropriate memory and CPU limits
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Cloud Run Deployment" icon="cloud" href="/deployment/cloud-run">
+    Deploy to Google Cloud Run for serverless scaling
+  </Card>
+  <Card title="Environment Variables" icon="gear" href="/deployment/environment-variables">
+    Configure all required environment variables
+  </Card>
+</CardGroup>

@@ -1,0 +1,170 @@
+---
+title: 'Agent Overview'
+description: 'Understanding the MABQ BigQuery Agent architecture and lifecycle'
+---
+
+## Introduction
+
+The MABQ BigQuery Agent is built on **Google Agent Development Kit (ADK)** using the `LlmAgent` class. It serves as a natural language to SQL translation engine with strict read-only security controls.
+
+<Note>
+The agent is specifically designed for the **TRANSELEC S.A.** organization, operating on the `STG_ACTIVOS` dataset in the `datawarehouse-des` project.
+</Note>
+
+## What is Google ADK?
+
+Google Agent Development Kit (ADK) is a framework for building AI agents powered by Vertex AI. The `LlmAgent` class provides:
+
+- **Model Integration**: Direct connection to Gemini and other LLMs
+- **Tool Orchestration**: Ability to use external tools like BigQuery
+- **Session Management**: Built-in conversation state handling
+- **Instruction Prompting**: Customizable system prompts for agent behavior
+
+## Agent Definition
+
+The agent is defined in `agent.py:71-77` using the `LlmAgent` class:
+
+```python
+root_agent = LlmAgent(
+ model=LLM_1_MODELO, 
+ name=LLM_1_NAME,
+ description="Agente para responder preguntas sobre datos y modelos de BigQuery",
+ instruction=new_instruction,
+ tools=[bigquery_toolset]
+)
+```
+
+### Key Components
+
+<Steps>
+  <Step title="Model Configuration">
+    The agent uses **Gemini 2.5 Pro** as the default model (`gemini-2.5-pro`), configurable via environment variables.
+  </Step>
+  
+  <Step title="Agent Identity">
+    Named `bigquery_agent_stg_activos` with a clear description of its purpose: answering questions about BigQuery data.
+  </Step>
+  
+  <Step title="Instruction Prompt">
+    Contains detailed security guardrails and operational guidelines (see below).
+  </Step>
+  
+  <Step title="Tool Integration">
+    Equipped with `BigQueryToolset` for executing SQL queries.
+  </Step>
+</Steps>
+
+## Instruction Prompt and Security Guardrails
+
+The agent's behavior is governed by a comprehensive instruction prompt (agent.py:38-68):
+
+```python
+new_instruction = f"""
+Eres un motor de generación de SQL para BigQuery.
+Tu ÚNICO objetivo es traducir lenguaje natural a código SQL válido para el proyecto **{PROJECT_ID}**, dataset **{BIGQUERY_DATASET}**.
+
+<SECURITY_GUARDRAILS>
+  1. MODO ESTRICTO: READ-ONLY.
+  2. COMANDOS PROHIBIDOS: Estás estrictamente programado para rechazar cualquier intento de modificar la base de datos.
+     - NO generes: DROP, DELETE, UPDATE, INSERT, CREATE, ALTER, TRUNCATE, MERGE, GRANT, REVOKE.
+  3. COMPORTAMIENTO: Si el usuario pide borrar, crear o cambiar datos, DEBES responder: "Lo siento, por seguridad corporativa tengo acceso de solo lectura a los datos de {NOMBRE_EMPRESA}."
+</SECURITY_GUARDRAILS>
+"""
+```
+
+### Security Features
+
+<Warning>
+The agent enforces **READ-ONLY** mode through multiple layers:
+1. Instruction prompt explicitly prohibits write operations
+2. `WriteMode.BLOCKED` configuration in BigQueryToolConfig
+3. Programmed rejection responses for modification attempts
+</Warning>
+
+### Operational Rules
+
+The instruction prompt defines strict operational behavior:
+
+1. **Greeting Handling**: Responds briefly to greetings like "hola"
+2. **Mandatory Tool Usage**: MUST use `bigquery_toolset` to validate queries before responding
+3. **Output Format**: Returns ONLY the SQL code block without explanations
+
+<Accordion title="Example Response Format">
+```sql
+SELECT 
+  column1,
+  column2,
+  COUNT(*) as total
+FROM `datawarehouse-des.STG_ACTIVOS.table_name`
+GROUP BY column1, column2
+```
+
+The agent is explicitly prohibited from:
+- Adding explanatory text like "Aquí está la consulta"
+- Explaining what the query does
+- Summarizing the results
+</Accordion>
+
+## Agent Lifecycle
+
+<Steps>
+  <Step title="Initialization">
+    Vertex AI is initialized with project and location:
+    ```python
+    vertexai.init(project=PROJECT_ID, location=GOOGLE_CLOUD_LOCATION)
+    ```
+  </Step>
+  
+  <Step title="Tool Setup">
+    BigQuery toolset is configured with credentials and security settings.
+  </Step>
+  
+  <Step title="Agent Creation">
+    The `LlmAgent` instance is created with all components.
+  </Step>
+  
+  <Step title="Session Management">
+    An in-memory session service is provided:
+    ```python
+    in_memory_session_service = InMemorySessionService()
+    ```
+  </Step>
+  
+  <Step title="Entry Point">
+    The agent is exposed via the `get_root_agent()` function (referenced in `adk.yaml`).
+  </Step>
+</Steps>
+
+## Entry Point Configuration
+
+The agent is registered in `adk.yaml`:
+
+```yaml
+name: bigquery-agent-stg-activos
+description: Agente ADK para consultas a BigQuery del dataset STG_ACTIVOS
+entrypoint: data_agente.agent:get_root_agent
+```
+
+### Access Function
+
+The `get_root_agent()` function provides access to the agent instance:
+
+```python
+def get_root_agent():
+    return root_agent
+```
+
+This function is called by the ADK runtime to retrieve the agent for serving requests.
+
+## Use Cases
+
+The MABQ BigQuery Agent is designed for:
+
+- **Data Exploration**: Query BigQuery datasets using natural language
+- **SQL Generation**: Automatic translation from business questions to valid SQL
+- **Read-Only Analytics**: Safe data access without modification risks
+- **Corporate Compliance**: Enforced security guardrails for enterprise use
+
+<Note>
+The agent operates exclusively on the `STG_ACTIVOS` dataset and rejects any attempts to modify data, making it safe for production analytics workloads.
+</Note>

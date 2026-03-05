@@ -1,0 +1,318 @@
+---
+title: 'CopilotKit Endpoint'
+description: 'Next.js API route integrating CopilotKit with the MABQ backend'
+---
+
+## Overview
+
+The CopilotKit endpoint is a Next.js App Router API route that bridges the frontend chat interface with the MABQ BigQuery Agent backend using the HttpAgent.
+
+## Endpoint Details
+
+<ParamField path="/api/copilotkit" type="POST">
+  CopilotKit runtime endpoint for agent communication
+</ParamField>
+
+## Implementation
+
+The endpoint is implemented in `app/api/copilotkit/route.ts`:
+
+```typescript
+import {
+  CopilotRuntime,
+  copilotRuntimeNextJSAppRouterEndpoint,
+} from "@copilotkit/runtime";
+import { HttpAgent } from "@ag-ui/client";
+import { NextRequest } from "next/server";
+
+const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || 
+  "https://mabq-backend-1093163678323.us-east4.run.app";
+
+export const POST = async (req: NextRequest) => {
+  const authHeader = req.headers.get("authorization") || "";
+  
+  const runtime = new CopilotRuntime({
+    agents: {
+      default_agent: new HttpAgent({ 
+        url: BACKEND_URL,
+        headers: {
+          "Authorization": authHeader
+        }
+      }),
+    },
+  });
+
+  const { handleRequest } = copilotRuntimeNextJSAppRouterEndpoint({
+    runtime,
+    serviceAdapter: new EmptyAdapter() as any, 
+    endpoint: "/api/copilotkit",
+  });
+
+  return handleRequest(req);
+};
+```
+
+## CopilotRuntime Configuration
+
+The CopilotRuntime manages the connection between the UI and the agent backend.
+
+### Runtime Setup
+
+```typescript
+const runtime = new CopilotRuntime({
+  agents: {
+    default_agent: new HttpAgent({ 
+      url: BACKEND_URL,
+      headers: {
+        "Authorization": authHeader
+      }
+    }),
+  },
+});
+```
+
+<ParamField path="agents" type="object" required>
+  Dictionary of available agents keyed by agent name
+</ParamField>
+
+<ParamField path="agents.default_agent" type="HttpAgent" required>
+  The primary agent instance connected to the MABQ backend
+</ParamField>
+
+### HttpAgent Configuration
+
+The HttpAgent proxies requests to the FastAPI backend:
+
+```typescript
+new HttpAgent({ 
+  url: BACKEND_URL,
+  headers: {
+    "Authorization": authHeader
+  }
+})
+```
+
+<ParamField path="url" type="string" required>
+  Backend URL from `NEXT_PUBLIC_API_URL` environment variable
+</ParamField>
+
+<ParamField path="headers" type="object">
+  HTTP headers forwarded to the backend on every request
+</ParamField>
+
+<ParamField path="headers.Authorization" type="string" required>
+  Azure AD Bearer token from the frontend request
+</ParamField>
+
+## Request Flow
+
+```mermaid
+sequenceDiagram
+    participant UI as CopilotKit UI
+    participant Route as /api/copilotkit
+    participant HttpAgent
+    participant Backend as FastAPI Backend
+    participant BigQuery
+    
+    UI->>Route: POST with message + auth
+    Route->>Route: Extract Authorization header
+    Route->>HttpAgent: Forward request
+    HttpAgent->>Backend: POST / with Authorization
+    Backend->>Backend: Validate JWT
+    Backend->>BigQuery: Execute query
+    BigQuery-->>Backend: Results
+    Backend-->>HttpAgent: SQL + results
+    HttpAgent-->>Route: Agent response
+    Route-->>UI: Formatted response
+```
+
+## Required Headers
+
+Clients must include an Authorization header when calling this endpoint:
+
+<ParamField header="Authorization" type="string" required>
+  Azure AD access token in Bearer format
+</ParamField>
+
+<ParamField header="Content-Type" type="string" default="application/json">
+  Request content type
+</ParamField>
+
+### Example Request
+
+<CodeGroup>
+
+```typescript Frontend Call
+const response = await fetch('/api/copilotkit', {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${accessToken}`,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    message: 'Show me the top 10 assets by value'
+  })
+});
+
+const data = await response.json();
+```
+
+```bash cURL
+curl -X POST https://your-frontend.vercel.app/api/copilotkit \
+  -H "Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGc..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Show me the top 10 assets by value"
+  }'
+```
+
+</CodeGroup>
+
+## Request Body
+
+The request body follows the CopilotKit protocol:
+
+<ParamField body="message" type="string" required>
+  User's natural language query for the agent
+</ParamField>
+
+<ParamField body="threadId" type="string">
+  Conversation thread identifier for multi-turn conversations
+</ParamField>
+
+<ParamField body="runId" type="string">
+  Unique run identifier for this request
+</ParamField>
+
+## Response Format
+
+The endpoint returns a CopilotKit-formatted response:
+
+<ResponseField name="message" type="string">
+  Agent's response message
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  Structured data from the agent (SQL query, results, etc.)
+</ResponseField>
+
+<ResponseField name="threadId" type="string">
+  Conversation thread identifier
+</ResponseField>
+
+### Example Response
+
+```json
+{
+  "message": "```sql\nSELECT asset_id, asset_name, value\nFROM `datawarehouse-des.STG_ACTIVOS.assets`\nORDER BY value DESC\nLIMIT 10\n```",
+  "data": {
+    "sql": "SELECT asset_id, asset_name, value FROM `datawarehouse-des.STG_ACTIVOS.assets` ORDER BY value DESC LIMIT 10",
+    "results": [...]
+  },
+  "threadId": "thread_abc123"
+}
+```
+
+## Service Adapter
+
+The endpoint uses an empty adapter as a placeholder:
+
+```typescript
+class EmptyAdapter {
+  async process(request: any) { return; }
+}
+
+const serviceAdapter = new EmptyAdapter() as any;
+```
+
+<Note>
+  The EmptyAdapter is used because agent logic is handled entirely by the backend. Future implementations may add frontend-side processing.
+</Note>
+
+## Environment Variables
+
+<ParamField path="NEXT_PUBLIC_API_URL" type="string" required>
+  Backend API URL (e.g., `https://mabq-backend-1093163678323.us-east4.run.app`)
+</ParamField>
+
+### Example Configuration
+
+```bash .env.local
+NEXT_PUBLIC_API_URL=https://mabq-backend-1093163678323.us-east4.run.app
+```
+
+## Error Handling
+
+The endpoint will return errors from the backend or CopilotKit runtime:
+
+### 403 Forbidden (Authentication Failed)
+
+```json
+{
+  "error": "Acceso Denegado. El token ha expirado."
+}
+```
+
+### 500 Internal Server Error (Backend Failure)
+
+```json
+{
+  "error": "Agent execution failed",
+  "details": "..."
+}
+```
+
+### 422 Unprocessable Entity (Invalid Request)
+
+```json
+{
+  "error": "Invalid message format"
+}
+```
+
+## Authorization Header Forwarding
+
+The key security feature is forwarding the Authorization header:
+
+```typescript
+const authHeader = req.headers.get("authorization") || "";
+
+// ...
+
+headers: {
+  "Authorization": authHeader
+}
+```
+
+This ensures:
+- Each backend request is authenticated with the user's token
+- The backend can validate user permissions
+- User identity is preserved throughout the request chain
+
+<Warning>
+  Never hardcode authentication tokens in the frontend. Always forward the user's token from the original request.
+</Warning>
+
+## Integration with CopilotKit UI
+
+The frontend uses this endpoint via the CopilotKit provider:
+
+```typescript
+import { CopilotKit } from "@copilotkit/react-core";
+
+<CopilotKit 
+  runtimeUrl="/api/copilotkit"
+  headers={() => ({
+    Authorization: `Bearer ${accessToken}`
+  })}
+>
+  {/* Your UI components */}
+</CopilotKit>
+```
+
+## Related Documentation
+
+- [HTTP Agent](/api/http-agent) - HttpAgent configuration details
+- [Authentication](/api/authentication) - Backend token validation
+- [FastAPI Endpoints](/api/fastapi-endpoints) - Backend API reference
+- [Agent Interface](/api/agent-interface) - BigQuery agent details

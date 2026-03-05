@@ -1,0 +1,375 @@
+---
+title: Environment Variables
+description: Complete reference for all environment variables used in MABQ Agent backend and frontend
+---
+
+MABQ Agent requires several environment variables for proper configuration. This page documents all variables for both the backend API and frontend application.
+
+## Backend Environment Variables
+
+The backend (`POC_ADK/main.py` and `POC_ADK/data_agente/agent.py`) requires the following environment variables.
+
+### Google Cloud Configuration
+
+<ParamField path="PROJECT_ID" type="string" default="datawarehouse-des" required>
+  Google Cloud project ID where BigQuery datasets reside.
+  
+  ```python
+  PROJECT_ID = os.getenv("PROJECT_ID", "datawarehouse-des")
+  ```
+  
+  **Example**: `datawarehouse-des`, `transelec-prod`
+</ParamField>
+
+<ParamField path="BIGQUERY_DATASET" type="string" default="STG_ACTIVOS" required>
+  BigQuery dataset name that the agent will query.
+  
+  ```python
+  BIGQUERY_DATASET = os.getenv("BIGQUERY_DATASET", "STG_ACTIVOS")
+  ```
+  
+  **Example**: `STG_ACTIVOS`, `ANALYTICS`, `REPORTING`
+</ParamField>
+
+<ParamField path="GOOGLE_CLOUD_LOCATION" type="string" default="us-east4" required>
+  Google Cloud region for Vertex AI and other services.
+  
+  ```python
+  GOOGLE_CLOUD_LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-east4")
+  ```
+  
+  **Common values**: `us-east4`, `us-central1`, `europe-west1`
+</ParamField>
+
+### Vertex AI Model Configuration
+
+<ParamField path="ANALYTICS_AGENT_MODEL" type="string" default="gemini-2.5-pro" required>
+  Primary Vertex AI model for the analytics agent.
+  
+  ```python
+  ANALYTICS_AGENT_MODEL = os.getenv("ANALYTICS_AGENT_MODEL", "gemini-2.5-pro")
+  ```
+  
+  **Available models**: `gemini-2.5-pro`, `gemini-2.0-flash`, `gemini-1.5-pro`
+</ParamField>
+
+<ParamField path="LLM_1_NAME" type="string" default="bigquery_agent_stg_activos">
+  Internal name for the BigQuery agent instance.
+  
+  ```python
+  LLM_1_NAME = os.getenv("LLM_1_NAME", "bigquery_agent_stg_activos")
+  ```
+  
+  This is used for logging and agent identification.
+</ParamField>
+
+<ParamField path="LLM_1_MODELO" type="string" default="gemini-2.5-pro">
+  Model name for the BigQuery agent (usually same as `ANALYTICS_AGENT_MODEL`).
+  
+  ```python
+  LLM_1_MODELO = os.getenv("LLM_1_MODELO", "gemini-2.5-pro")
+  ```
+</ParamField>
+
+### Azure AD Authentication
+
+<ParamField path="AZURE_TENANT_ID" type="string" required>
+  Azure Active Directory tenant ID for authentication.
+  
+  ```python
+  TENANT_ID = os.environ["AZURE_TENANT_ID"]
+  ```
+  
+  **Format**: UUID (e.g., `12345678-1234-1234-1234-123456789abc`)
+  
+  Find this in Azure Portal → Azure Active Directory → Overview → Tenant ID
+</ParamField>
+
+<ParamField path="AZURE_CLIENT_ID" type="string" required>
+  Azure AD application (client) ID for JWT validation.
+  
+  ```python
+  CLIENT_ID = os.environ["AZURE_CLIENT_ID"]
+  ```
+  
+  **Format**: UUID (e.g., `87654321-4321-4321-4321-cba987654321`)
+  
+  Find this in Azure Portal → App registrations → Your App → Application (client) ID
+</ParamField>
+
+<Warning>
+`AZURE_TENANT_ID` and `AZURE_CLIENT_ID` are **required** and will cause the application to crash if not set. These are used for JWT token validation.
+</Warning>
+
+### CORS and Frontend Configuration
+
+<ParamField path="FRONTEND_URL" type="string" default="https://mabq-frontend-1093163678323.us-east4.run.app" required>
+  Allowed frontend origin for CORS configuration.
+  
+  ```python
+  FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://mabq-frontend-1093163678323.us-east4.run.app")
+  
+  app.add_middleware(
+      CORSMiddleware,
+      allow_origins=[FRONTEND_URL], 
+      allow_credentials=True,
+      allow_methods=["*"],
+      allow_headers=["*"],
+  )
+  ```
+  
+  **Must match**: The exact URL where your frontend is deployed (including protocol and domain)
+</ParamField>
+
+<Note>
+The backend implements **strict CORS** validation. Only requests from the specified `FRONTEND_URL` will be accepted.
+</Note>
+
+### Optional Configuration
+
+<ParamField path="NOMBRE_EMPRESA" type="string" default="TRANSELEC S.A.">
+  Company name used in agent instructions and error messages.
+  
+  ```python
+  NOMBRE_EMPRESA = os.getenv("NOMBRE_EMPRESA", "TRANSELEC S.A.")
+  ```
+  
+  This appears in security guardrail messages to users.
+</ParamField>
+
+## Frontend Environment Variables
+
+The frontend (`frontend-agente/app/api/copilotkit/route.ts`) requires the following environment variables.
+
+### Backend API Configuration
+
+<ParamField path="NEXT_PUBLIC_API_URL" type="string" default="https://mabq-backend-1093163678323.us-east4.run.app" required>
+  Backend API URL for the frontend to connect to.
+  
+  ```typescript
+  const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || "https://mabq-backend-1093163678323.us-east4.run.app";
+  ```
+  
+  **Must be public**: Variables prefixed with `NEXT_PUBLIC_` are exposed to the browser.
+</ParamField>
+
+<Warning>
+The `NEXT_PUBLIC_` prefix makes this variable accessible in browser JavaScript. Only use this prefix for non-sensitive configuration.
+</Warning>
+
+### Next.js Configuration
+
+<ParamField path="NODE_ENV" type="string" default="production">
+  Node.js environment mode. Set automatically by the Docker container.
+  
+  ```dockerfile
+  ENV NODE_ENV production
+  ```
+  
+  **Values**: `development`, `production`, `test`
+</ParamField>
+
+<ParamField path="NEXT_TELEMETRY_DISABLED" type="string" default="1">
+  Disables Next.js telemetry collection.
+  
+  ```dockerfile
+  ENV NEXT_TELEMETRY_DISABLED 1
+  ```
+  
+  Set to `1` to disable, `0` to enable.
+</ParamField>
+
+<ParamField path="PORT" type="number" default="3000">
+  Port the frontend server listens on.
+  
+  ```dockerfile
+  ENV PORT 3000
+  ```
+</ParamField>
+
+<ParamField path="HOSTNAME" type="string" default="0.0.0.0">
+  Hostname binding for the Next.js server.
+  
+  ```dockerfile
+  ENV HOSTNAME "0.0.0.0"
+  ```
+</ParamField>
+
+## Environment Variable Examples
+
+### Development (.env)
+
+Create a `.env` file in your backend directory:
+
+```bash
+# Google Cloud
+PROJECT_ID=datawarehouse-dev
+BIGQUERY_DATASET=STG_ACTIVOS
+GOOGLE_CLOUD_LOCATION=us-east4
+
+# Vertex AI
+ANALYTICS_AGENT_MODEL=gemini-2.5-pro
+LLM_1_NAME=bigquery_agent_dev
+LLM_1_MODELO=gemini-2.5-pro
+
+# Azure AD
+AZURE_TENANT_ID=12345678-1234-1234-1234-123456789abc
+AZURE_CLIENT_ID=87654321-4321-4321-4321-cba987654321
+
+# CORS
+FRONTEND_URL=http://localhost:3000
+
+# Optional
+NOMBRE_EMPRESA=TRANSELEC S.A.
+```
+
+Create a `.env.local` file in your frontend directory:
+
+```bash
+NEXT_PUBLIC_API_URL=http://localhost:8080
+```
+
+### Production (Cloud Run)
+
+For Cloud Run deployments, set environment variables using the `gcloud` CLI:
+
+<CodeGroup>
+
+```bash Backend
+gcloud run services update mabq-backend \
+  --region us-east4 \
+  --set-env-vars PROJECT_ID=datawarehouse-prod \
+  --set-env-vars BIGQUERY_DATASET=STG_ACTIVOS \
+  --set-env-vars GOOGLE_CLOUD_LOCATION=us-east4 \
+  --set-env-vars ANALYTICS_AGENT_MODEL=gemini-2.5-pro \
+  --set-env-vars LLM_1_NAME=bigquery_agent_prod \
+  --set-env-vars LLM_1_MODELO=gemini-2.5-pro \
+  --set-env-vars AZURE_TENANT_ID=your-tenant-id \
+  --set-env-vars AZURE_CLIENT_ID=your-client-id \
+  --set-env-vars FRONTEND_URL=https://mabq-frontend-xxx.run.app \
+  --set-env-vars NOMBRE_EMPRESA="TRANSELEC S.A."
+```
+
+```bash Frontend
+gcloud run services update mabq-frontend \
+  --region us-east4 \
+  --set-env-vars NEXT_PUBLIC_API_URL=https://mabq-backend-xxx.run.app
+```
+
+</CodeGroup>
+
+## Validation
+
+### Backend Validation
+
+The backend validates required variables at startup:
+
+```python
+# These will raise KeyError if not set
+TENANT_ID = os.environ["AZURE_TENANT_ID"]
+CLIENT_ID = os.environ["AZURE_CLIENT_ID"]
+
+# These use defaults if not set
+PROJECT_ID = os.getenv("PROJECT_ID", "datawarehouse-des")
+BIGQUERY_DATASET = os.getenv("BIGQUERY_DATASET", "STG_ACTIVOS")
+```
+
+### Frontend Validation
+
+The frontend uses fallback values:
+
+```typescript
+const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || "https://mabq-backend-1093163678323.us-east4.run.app";
+```
+
+<Note>
+While defaults are provided, it's **strongly recommended** to explicitly set all variables in production.
+</Note>
+
+## Security Best Practices
+
+<Steps>
+  <Step title="Never Commit Secrets">
+    Add `.env` files to `.gitignore`. Never commit sensitive values to version control.
+  </Step>
+  
+  <Step title="Use Secret Manager">
+    For production, consider using Google Secret Manager instead of environment variables:
+    
+    ```bash
+    gcloud run services update mabq-backend \
+      --update-secrets AZURE_CLIENT_ID=azure-client-id:latest
+    ```
+  </Step>
+  
+  <Step title="Rotate Credentials">
+    Regularly rotate Azure AD client secrets and update the `AZURE_CLIENT_ID` accordingly.
+  </Step>
+  
+  <Step title="Principle of Least Privilege">
+    Grant the service account only the minimum required BigQuery permissions.
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Missing Required Variables
+
+If the backend crashes with `KeyError`, check that all required variables are set:
+
+```bash
+gcloud run services describe mabq-backend \
+  --region us-east4 \
+  --format 'value(spec.template.spec.containers[0].env)'
+```
+
+### CORS Issues
+
+If you see CORS errors, verify the `FRONTEND_URL` matches exactly:
+
+```bash
+# Backend logs will show the configured FRONTEND_URL
+gcloud run services logs read mabq-backend --region us-east4 --limit 10
+```
+
+### Wrong Backend URL
+
+If the frontend can't connect, verify `NEXT_PUBLIC_API_URL`:
+
+```bash
+# Check build-time environment variables
+docker inspect mabq-frontend | grep NEXT_PUBLIC_API_URL
+```
+
+<Warning>
+`NEXT_PUBLIC_*` variables are embedded at **build time**. Changing them requires rebuilding the frontend Docker image.
+</Warning>
+
+## Variable Reference Table
+
+| Variable | Service | Required | Default | Description |
+|----------|---------|----------|---------|-------------|
+| `PROJECT_ID` | Backend | Yes | `datawarehouse-des` | Google Cloud project ID |
+| `BIGQUERY_DATASET` | Backend | Yes | `STG_ACTIVOS` | BigQuery dataset name |
+| `GOOGLE_CLOUD_LOCATION` | Backend | Yes | `us-east4` | GCP region |
+| `ANALYTICS_AGENT_MODEL` | Backend | Yes | `gemini-2.5-pro` | Vertex AI model |
+| `LLM_1_NAME` | Backend | No | `bigquery_agent_stg_activos` | Agent name |
+| `LLM_1_MODELO` | Backend | No | `gemini-2.5-pro` | Agent model |
+| `AZURE_TENANT_ID` | Backend | **Required** | None | Azure AD tenant ID |
+| `AZURE_CLIENT_ID` | Backend | **Required** | None | Azure AD client ID |
+| `FRONTEND_URL` | Backend | Yes | Cloud Run URL | CORS allowed origin |
+| `NOMBRE_EMPRESA` | Backend | No | `TRANSELEC S.A.` | Company name |
+| `NEXT_PUBLIC_API_URL` | Frontend | Yes | Cloud Run URL | Backend API URL |
+| `NODE_ENV` | Frontend | No | `production` | Node environment |
+| `NEXT_TELEMETRY_DISABLED` | Frontend | No | `1` | Disable telemetry |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Docker Deployment" icon="docker" href="/deployment/docker">
+    Build Docker containers with environment variables
+  </Card>
+  <Card title="Cloud Run Deployment" icon="cloud" href="/deployment/cloud-run">
+    Deploy to Cloud Run with proper configuration
+  </Card>
+</CardGroup>

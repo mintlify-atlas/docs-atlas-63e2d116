@@ -1,0 +1,339 @@
+---
+title: 'Authentication'
+description: 'Azure AD JWT authentication middleware for the MABQ Agent API'
+---
+
+## Overview
+
+The MABQ Agent API uses Azure Active Directory (Azure AD) JWT tokens for authentication. All requests must include a valid Bearer token from an authorized `@transelec.cl` user.
+
+## Authentication Flow
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Middleware
+    participant Azure AD
+    participant API
+    
+    Client->>Middleware: Request with Bearer token
+    Middleware->>Azure AD: Fetch JWKS
+    Azure AD-->>Middleware: Public keys
+    Middleware->>Middleware: Validate JWT signature
+    Middleware->>Middleware: Check domain (@transelec.cl)
+    alt Valid token
+        Middleware->>API: Forward request with user profile
+        API-->>Client: Response
+    else Invalid token
+        Middleware-->>Client: 403 Forbidden
+    end
+```
+
+## Required Headers
+
+All authenticated requests must include an Authorization header:
+
+```bash
+Authorization: Bearer <AZURE_AD_ACCESS_TOKEN>
+```
+
+<ParamField header="Authorization" type="string" required>
+  Azure AD access token in Bearer format
+</ParamField>
+
+### Example Request
+
+<CodeGroup>
+
+```bash cURL
+curl -X POST https://mabq-backend.run.app/ \
+  -H "Authorization: Bearer eyJ0eXAiOiJKV1QiLCJhbGc..." \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Show me recent assets"}'
+```
+
+```javascript Fetch
+const token = await getAzureAdToken();
+
+const response = await fetch('https://mabq-backend.run.app/', {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${token}`,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({ message: 'Show me recent assets' })
+});
+```
+
+```python Python
+import requests
+
+token = get_azure_ad_token()
+
+response = requests.post(
+    'https://mabq-backend.run.app/',
+    headers={'Authorization': f'Bearer {token}'},
+    json={'message': 'Show me recent assets'}
+)
+```
+
+</CodeGroup>
+
+## Middleware Implementation
+
+The authentication middleware is implemented in `main.py` as a FastAPI middleware:
+
+```python
+@app.middleware("http")
+async def strict_security_middleware(request: Request, call_next):
+    # Bypass authentication for specific paths
+    if request.method == "OPTIONS" or request.url.path in ["/docs", "/openapi.json", "/health"]:
+        return await call_next(request)
+    if request.method == "GET" and request.url.path == "/":
+        return await call_next(request)
+
+    # Extract and validate token
+    auth_header = request.headers.get("Authorization", "")
+    
+    if auth_header.startswith("Bearer "):
+        raw_token = auth_header.split(" ")[1]
+        token = raw_token.strip().strip('"').strip("'").rstrip(',')
+        
+        # Validate JWT signature using Azure AD JWKS
+        TENANT_ID = os.environ["AZURE_TENANT_ID"]
+        CLIENT_ID = os.environ["AZURE_CLIENT_ID"]
+        
+        jwks_client = jwt.PyJWKClient(
+            f"https://login.microsoftonline.com/{TENANT_ID}/discovery/v2.0/keys"
+        )
+        signing_key = jwks_client.get_signing_key_from_jwt(token)
+        
+        payload = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            audience=CLIENT_ID,
+            issuer=[
+                f"https://login.microsoftonline.com/{TENANT_ID}/v2.0",
+                f"https://sts.windows.net/{TENANT_ID}/"
+            ]
+        )
+```
+
+## Token Validation
+
+The middleware performs the following validation steps:
+
+### 1. Token Extraction
+
+The token is extracted from the `Authorization` header and sanitized:
+
+```python
+raw_token = auth_header.split(" ")[1]
+token = raw_token.strip().strip('"').strip("'").rstrip(',')
+```
+
+### 2. JWT Structure Validation
+
+The token must have exactly 3 parts (header.payload.signature):
+
+```python
+segmentos = len(token.split('.'))
+if segmentos != 3:
+    logger.error("EL TOKEN NO ES UN JWT VÁLIDO. No tiene 3 partes.")
+```
+
+### 3. Signature Verification
+
+The token signature is verified using Azure AD's public keys (JWKS):
+
+```python
+jwks_client = jwt.PyJWKClient(
+    f"https://login.microsoftonline.com/{TENANT_ID}/discovery/v2.0/keys"
+)
+signing_key = jwks_client.get_signing_key_from_jwt(token)
+
+payload = jwt.decode(
+    token,
+    signing_key.key,
+    algorithms=["RS256"],
+    audience=CLIENT_ID,
+    issuer=[...]
+)
+```
+
+<ParamField path="algorithms" type="list[str]" default="['RS256']">
+  Only RS256 (RSA) signatures are accepted
+</ParamField>
+
+<ParamField path="audience" type="string">
+  Must match the `AZURE_CLIENT_ID` environment variable
+</ParamField>
+
+<ParamField path="issuer" type="list[str]">
+  Valid Azure AD token issuers for the tenant
+</ParamField>
+
+### 4. Domain Validation
+
+The user's email must end with `@transelec.cl`:
+
+```python
+token_email = payload.get("preferred_username") or payload.get("upn") or payload.get("email")
+
+if token_email and str(token_email).lower().endswith("@transelec.cl"):
+    user_profile = {
+        "email": token_email,
+        "name": token_name,
+        "tid": payload.get("tid") 
+    }
+else:
+    denial_reason = f"Dominio no autorizado. Email: {token_email}"
+```
+
+## User Profile
+
+Upon successful authentication, the user profile is attached to the request state:
+
+```python
+request.state.user = user_profile
+```
+
+<ResponseField name="email" type="string">
+  User's email address from the token (`preferred_username`, `upn`, or `email` claim)
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  User's display name from the `name` claim
+</ResponseField>
+
+<ResponseField name="tid" type="string">
+  Azure AD tenant ID from the token
+</ResponseField>
+
+## Error Responses
+
+The middleware returns a 403 Forbidden response for authentication failures:
+
+### Missing Token
+
+```json
+{
+  "error": "Acceso Denegado. No se proporcionó token de autenticación"
+}
+```
+
+### Expired Token
+
+```json
+{
+  "error": "Acceso Denegado. El token ha expirado."
+}
+```
+
+### Invalid Signature
+
+```json
+{
+  "error": "Acceso Denegado. FIRMA INVÁLIDA."
+}
+```
+
+### Unauthorized Domain
+
+```json
+{
+  "error": "Acceso Denegado. Dominio no autorizado. Email: user@example.com"
+}
+```
+
+### Generic Validation Error
+
+```json
+{
+  "error": "Acceso Denegado. Error crítico validando token: <error details>"
+}
+```
+
+<ResponseField name="error" type="string">
+  Detailed error message explaining the authentication failure
+</ResponseField>
+
+## Exempt Paths
+
+The following paths bypass authentication:
+
+<ParamField path="/health" type="GET">
+  Health check endpoint for container orchestration
+</ParamField>
+
+<ParamField path="/docs" type="GET">
+  Swagger UI documentation (development only)
+</ParamField>
+
+<ParamField path="/openapi.json" type="GET">
+  OpenAPI schema (development only)
+</ParamField>
+
+<ParamField path="/" type="GET">
+  Root path GET requests (used for health checks)
+</ParamField>
+
+<ParamField path="*" type="OPTIONS">
+  CORS preflight requests
+</ParamField>
+
+## Environment Variables
+
+<ParamField path="AZURE_TENANT_ID" type="string" required>
+  Azure AD tenant ID (found in Azure Portal > Azure Active Directory > Overview)
+</ParamField>
+
+<ParamField path="AZURE_CLIENT_ID" type="string" required>
+  Application (client) ID from Azure AD app registration
+</ParamField>
+
+## Logging
+
+The middleware logs authentication events for audit purposes:
+
+```python
+logger = logging.getLogger("MABQ_Audit")
+
+# Successful authentication
+logger.info(f" PERFIL VERIFICADO | Email: {user_profile['email']}")
+
+# Failed authentication
+logger.warning(f" BLOQUEO DE ACCESO | Motivo: {denial_reason}")
+```
+
+### Debug Logging
+
+For troubleshooting, the middleware logs token details:
+
+```python
+logger.info(f" [AUTOPSIA] Token empieza con: {token[:15]} | Termina con: {token[-10:]}")
+logger.info(f" [AUTOPSIA] Longitud: {len(token)} | Cantidad de puntos (.): {segmentos - 1}")
+logger.info(f" [DEBUG] HEADER DEL TOKEN: {unverified_header}")
+logger.info(f" [DEBUG] PAYLOAD DEL TOKEN: {unverified_payload}")
+```
+
+<Warning>
+  Debug logging includes unverified token contents. Ensure logs are secured in production.
+</Warning>
+
+## Security Best Practices
+
+<Tip>
+  - Always use HTTPS to prevent token interception
+  - Store tokens securely (never in localStorage)
+  - Refresh tokens before expiration
+  - Validate the audience claim matches your application
+  - Monitor authentication logs for suspicious activity
+</Tip>
+
+## Related Documentation
+
+- [FastAPI Endpoints](/api/fastapi-endpoints) - API endpoint reference
+- [CopilotKit Endpoint](/api/copilotkit-endpoint) - Frontend authentication
+- [HTTP Agent](/api/http-agent) - Authorization header forwarding

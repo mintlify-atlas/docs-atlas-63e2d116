@@ -1,0 +1,185 @@
+---
+title: 'FastAPI Endpoints'
+description: 'Complete reference for the MABQ BigQuery Agent FastAPI application'
+---
+
+## Overview
+
+The MABQ BigQuery Agent backend is built with FastAPI and integrates the Google ADK (Agent Development Kit) to provide a conversational interface for BigQuery data analysis.
+
+## Application Configuration
+
+The FastAPI app is configured with strict CORS policies and security middleware.
+
+```python
+app = FastAPI(title="Transelec MABQ Agent")
+```
+
+### CORS Middleware
+
+The application enforces strict CORS to allow only authorized frontend origins:
+
+```python
+FRONTEND_URL = os.environ.get(
+    "FRONTEND_URL", 
+    "https://mabq-frontend-1093163678323.us-east4.run.app"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[FRONTEND_URL], 
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+```
+
+<ParamField path="allow_origins" type="list[str]">
+  Single frontend URL from environment variable `FRONTEND_URL`
+</ParamField>
+
+<ParamField path="allow_credentials" type="bool" default="true">
+  Enables cookie and authorization header support
+</ParamField>
+
+<ParamField path="allow_methods" type="list[str]" default="['*']">
+  All HTTP methods allowed
+</ParamField>
+
+<ParamField path="allow_headers" type="list[str]" default="['*']">
+  All headers allowed for authenticated requests
+</ParamField>
+
+## Endpoints
+
+### ADK Agent Endpoint
+
+The main conversational agent endpoint is registered at the root path by the ADK framework.
+
+<CodeGroup>
+
+```python Backend Registration
+from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint
+
+adk_wrapper = ADKAgent(
+    adk_agent=agente_backend, 
+    app_name="transelec-mabq", 
+    user_id="verified-user",
+    use_in_memory_services=True
+)
+
+add_adk_fastapi_endpoint(app, adk_wrapper, path="/")
+```
+
+```bash cURL Example
+curl -X POST https://your-backend.run.app/ \
+  -H "Authorization: Bearer YOUR_AZURE_AD_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Show me the top 10 assets by value"
+  }'
+```
+
+</CodeGroup>
+
+<ParamField path="path" type="string" default="/">
+  Root path where the ADK agent is mounted
+</ParamField>
+
+<ParamField path="use_in_memory_services" type="bool" default="true">
+  Uses in-memory session storage for conversation state
+</ParamField>
+
+#### Response Format
+
+The ADK endpoint returns agent responses in a streaming or JSON format depending on the client configuration.
+
+<ResponseField name="message" type="string">
+  Agent's response to the user query
+</ResponseField>
+
+<ResponseField name="sql" type="string">
+  Generated SQL query (when applicable)
+</ResponseField>
+
+<ResponseField name="results" type="array">
+  Query results from BigQuery (when executed)
+</ResponseField>
+
+### Health Check Endpoint
+
+The health endpoint is exempt from authentication and used for container health checks.
+
+```bash
+curl https://your-backend.run.app/health
+```
+
+<Note>
+  The `/health` endpoint bypasses authentication middleware (see main.py:34)
+</Note>
+
+### Documentation Endpoints
+
+FastAPI automatically generates interactive API documentation:
+
+- **Swagger UI**: `/docs`
+- **ReDoc**: `/redoc`
+- **OpenAPI Schema**: `/openapi.json`
+
+These endpoints are exempt from authentication for development purposes.
+
+## Security Middleware
+
+All endpoints (except `/health`, `/docs`, and `/openapi.json`) are protected by the authentication middleware. See [Authentication](/api/authentication) for details.
+
+## Running the Server
+
+The application runs with Uvicorn on port 8000:
+
+```python
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+```
+
+<ParamField path="host" type="string" default="0.0.0.0">
+  Binds to all network interfaces for container deployment
+</ParamField>
+
+<ParamField path="port" type="int" default="8000">
+  HTTP port for the FastAPI application
+</ParamField>
+
+## Environment Variables
+
+<ParamField path="FRONTEND_URL" type="string" required>
+  Authorized frontend origin for CORS
+</ParamField>
+
+<ParamField path="AZURE_TENANT_ID" type="string" required>
+  Azure AD tenant ID for JWT validation
+</ParamField>
+
+<ParamField path="AZURE_CLIENT_ID" type="string" required>
+  Azure AD application client ID (audience)
+</ParamField>
+
+## Example Deployment
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: mabq-backend
+spec:
+  ports:
+  - port: 8000
+    targetPort: 8000
+  selector:
+    app: mabq-backend
+```
+
+## Related Documentation
+
+- [Agent Interface](/api/agent-interface) - Learn about the underlying BigQuery agent
+- [Authentication](/api/authentication) - Understand the security model
+- [CopilotKit Endpoint](/api/copilotkit-endpoint) - Frontend integration

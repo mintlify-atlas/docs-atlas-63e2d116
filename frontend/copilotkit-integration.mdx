@@ -1,0 +1,272 @@
+---
+title: CopilotKit Integration
+description: How CopilotKit connects the frontend to the backend agent runtime
+---
+
+CopilotKit provides the AI-powered chat interface and manages the connection between the Next.js frontend and the LangGraph backend agent. It handles message streaming, state management, and runtime communication.
+
+## What is CopilotKit?
+
+CopilotKit is a framework for building AI copilots in React applications. It provides:
+
+- **Chat UI Components**: Pre-built, customizable chat interface
+- **Runtime Management**: Handles agent communication and streaming
+- **State Synchronization**: Manages conversation state between frontend and backend
+- **Custom Headers**: Supports authentication and context passing
+
+## Architecture Overview
+
+```mermaid
+graph LR
+    A[CopilotChat UI] --> B[CopilotKit Provider]
+    B --> C[/api/copilotkit]
+    C --> D[HttpAgent]
+    D --> E[Backend LangGraph Agent]
+```
+
+<Steps>
+  <Step title="User sends message">
+    The user types a message in the CopilotChat component
+  </Step>
+  
+  <Step title="CopilotKit forwards to runtime">
+    CopilotKit sends the message to `/api/copilotkit` with authorization headers
+  </Step>
+  
+  <Step title="HttpAgent proxies to backend">
+    The Next.js API route forwards the request to the LangGraph backend
+  </Step>
+  
+  <Step title="Backend responds">
+    The agent processes the query, executes SQL, and streams the response back
+  </Step>
+</Steps>
+
+## CopilotKit Provider Setup
+
+The main page wraps the chat interface with the `CopilotKit` provider:
+
+<CodeGroup>
+```tsx app/page.tsx
+return (
+  <CopilotKit 
+    runtimeUrl="/api/copilotkit" 
+    agent="default_agent"
+    headers={{
+      "Authorization": `Bearer ${authToken}`,
+      "X-Visual-Name": userName 
+    }}
+  >
+    <main className="flex h-screen w-full flex-col bg-white">
+      <CopilotChat
+        className="h-full w-full"
+        instructions="Ayuda con consultas SQL de BigQuery. Responde con tablas y datos precisos."
+        labels={{
+          title: "Asistente MABQ",
+          initial: `Hola ${userName ? userName.split(' ')[0] : ''}. . Soy un asistente SQL para tus preguntas de datos, en la primera pregunta me toma tiempo para ejecutar, ¿Con qué duda te puedo ayudar? `,
+        }}
+      />
+    </main>
+  </CopilotKit>
+);
+```
+</CodeGroup>
+
+### Provider Configuration
+
+| Property | Value | Description |
+|----------|-------|-------------|
+| `runtimeUrl` | `/api/copilotkit` | Next.js API route that handles agent communication |
+| `agent` | `default_agent` | Agent name registered in the CopilotRuntime |
+| `headers` | Authorization + X-Visual-Name | Custom headers passed to the backend |
+
+<Note>
+  The `Authorization` header contains the Microsoft Teams SSO token, which the backend validates. The `X-Visual-Name` header passes the user's display name for personalization.
+</Note>
+
+## CopilotChat Component
+
+The `CopilotChat` component renders the chat interface:
+
+```tsx
+<CopilotChat
+  className="h-full w-full"
+  instructions="Ayuda con consultas SQL de BigQuery. Responde con tablas y datos precisos."
+  labels={{
+    title: "Asistente MABQ",
+    initial: `Hola ${userName ? userName.split(' ')[0] : ''}. . Soy un asistente SQL para tus preguntas de datos, en la primera pregunta me toma tiempo para ejecutar, ¿Con qué duda te puedo ayudar? `,
+  }}
+/>
+```
+
+### Configuration Options
+
+- **`instructions`**: System prompt sent to the agent for context
+- **`labels.title`**: Chat window title displayed to users
+- **`labels.initial`**: Welcome message shown on first load
+- **`className`**: Tailwind classes for full-screen layout
+
+## Backend Runtime Configuration
+
+The `/api/copilotkit` route configures the CopilotRuntime:
+
+<CodeGroup>
+```ts app/api/copilotkit/route.ts
+import {
+  CopilotRuntime,
+  copilotRuntimeNextJSAppRouterEndpoint,
+} from "@copilotkit/runtime";
+import { HttpAgent } from "@ag-ui/client";
+import { NextRequest } from "next/server";
+
+// Adaptador vacío
+class EmptyAdapter {
+  async process(request: any) { return; }
+}
+const serviceAdapter = new EmptyAdapter() as any; 
+
+const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || "https://mabq-backend-1093163678323.us-east4.run.app";
+
+export const POST = async (req: NextRequest) => {
+  const authHeader = req.headers.get("authorization") || "";
+  const runtime = new CopilotRuntime({
+    agents: {
+      default_agent: new HttpAgent({ 
+        url: BACKEND_URL,
+        headers: {
+          "Authorization": authHeader
+        }
+      }),
+    },
+  });
+
+  const { handleRequest } = copilotRuntimeNextJSAppRouterEndpoint({
+    runtime,
+    serviceAdapter, 
+    endpoint: "/api/copilotkit",
+  });
+
+  return handleRequest(req);
+};
+```
+</CodeGroup>
+
+## HttpAgent Configuration
+
+The `HttpAgent` from `@ag-ui/client` acts as a proxy to the backend:
+
+<Steps>
+  <Step title="Extract Authorization Header">
+    ```ts
+    const authHeader = req.headers.get("authorization") || "";
+    ```
+    Retrieves the Teams SSO token from the incoming request
+  </Step>
+
+  <Step title="Create HttpAgent">
+    ```ts
+    new HttpAgent({ 
+      url: BACKEND_URL,
+      headers: {
+        "Authorization": authHeader
+      }
+    })
+    ```
+    Configures the agent to forward requests to the backend with authentication
+  </Step>
+
+  <Step title="Register Agent">
+    ```ts
+    agents: {
+      default_agent: new HttpAgent({ ... }),
+    }
+    ```
+    Registers the agent with the name `default_agent` (matches the frontend configuration)
+  </Step>
+</Steps>
+
+<Warning>
+  The `BACKEND_URL` defaults to the production Cloud Run service. Override with `NEXT_PUBLIC_API_URL` environment variable for local development.
+</Warning>
+
+## Runtime Flow
+
+### Request Headers
+
+When a user sends a message, the following headers are passed:
+
+| Header | Source | Destination | Purpose |
+|--------|--------|-------------|----------|
+| `Authorization` | Teams SDK → Frontend | Frontend → Backend | SSO token for authentication |
+| `X-Visual-Name` | Teams SDK → Frontend | Frontend → Backend | User display name for context |
+
+### Message Processing
+
+<Steps>
+  <Step title="User Message">
+    User types a question like "Show me the top 10 customers by revenue"
+  </Step>
+
+  <Step title="CopilotKit Sends Request">
+    CopilotKit sends a POST request to `/api/copilotkit` with:
+    - Message content
+    - Conversation history
+    - Authorization header
+    - X-Visual-Name header
+  </Step>
+
+  <Step title="HttpAgent Forwards to Backend">
+    The HttpAgent proxies the request to the LangGraph backend at `BACKEND_URL`
+  </Step>
+
+  <Step title="Backend Processes Query">
+    The backend:
+    - Validates the Teams token
+    - Extracts user intent
+    - Generates and executes SQL
+    - Returns streaming response
+  </Step>
+
+  <Step title="Frontend Displays Response">
+    CopilotChat renders the streaming response with:
+    - Text explanations
+    - Data tables
+    - Error messages (if any)
+  </Step>
+</Steps>
+
+## Empty Service Adapter
+
+The `EmptyAdapter` is a placeholder required by the CopilotKit runtime:
+
+```ts
+class EmptyAdapter {
+  async process(request: any) { return; }
+}
+const serviceAdapter = new EmptyAdapter() as any;
+```
+
+<Note>
+  This adapter doesn't perform any processing since all agent logic is handled by the LangGraph backend. It's required by the `copilotRuntimeNextJSAppRouterEndpoint` API.
+</Note>
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NEXT_PUBLIC_API_URL` | `https://mabq-backend-1093163678323.us-east4.run.app` | Backend LangGraph agent URL |
+
+<Warning>
+  The `NEXT_PUBLIC_` prefix makes this variable accessible in the browser. Ensure the backend URL is publicly accessible or protected by authentication.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Teams Integration" icon="users" href="/frontend/teams-integration">
+    Learn about Microsoft Teams authentication flow
+  </Card>
+  <Card title="Backend Architecture" icon="server" href="/backend/architecture">
+    Understand the LangGraph agent backend
+  </Card>
+</CardGroup>

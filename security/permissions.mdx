@@ -1,0 +1,360 @@
+---
+title: 'IAM Permissions & Roles'
+description: 'Required permissions for service accounts, developers, and administrators'
+icon: 'users-gear'
+---
+
+## Overview
+
+MABQ operates on a **serverless architecture** using Google Cloud Run with integration to BigQuery and Vertex AI, secured by Microsoft Azure AD. This document defines the IAM roles and permissions required for different personas involved in the project.
+
+<Note>
+  The architecture uses a **principle of least privilege** model where each persona only receives the minimum permissions necessary for their responsibilities.
+</Note>
+
+## Service Account Permissions
+
+The service account is the identity used by the **backend Cloud Run service** to access GCP resources. This account must have read-only access to data with AI capabilities.
+
+### Required IAM Roles
+
+<Accordion title="BigQuery Data Viewer">
+  **Purpose**: Grants read-only access to BigQuery datasets
+  
+  **Permissions**:
+  - `bigquery.datasets.get`
+  - `bigquery.tables.get`
+  - `bigquery.tables.list`
+  - `bigquery.tables.getData`
+  
+  **Usage**: Allows the agent to read table schemas and data from the `STG_ACTIVOS` dataset and other authorized datasets.
+  
+  **Security Note**: This role does **not** grant permissions to modify, delete, or create data.
+</Accordion>
+
+<Accordion title="BigQuery Job User">
+  **Purpose**: Allows execution of BigQuery queries
+  
+  **Permissions**:
+  - `bigquery.jobs.create`
+  - `bigquery.jobs.get`
+  - `bigquery.jobs.list`
+  
+  **Usage**: Enables the agent to submit SQL queries generated from natural language requests and retrieve results.
+  
+  **Security Note**: Combined with `BigQuery Data Viewer`, this role only permits read queries. Write operations require additional roles that are **not granted**.
+</Accordion>
+
+<Accordion title="Vertex AI User">
+  **Purpose**: Grants access to Vertex AI generative models
+  
+  **Permissions**:
+  - `aiplatform.endpoints.predict`
+  - `aiplatform.models.predict`
+  
+  **Usage**: Allows the agent to invoke Gemini 2.5 Pro for natural language to SQL translation and response generation.
+  
+  **Model Access**: Specifically enables use of `gemini-2.5-pro` in the `us-east4` region.
+</Accordion>
+
+### Service Account Configuration
+
+```python
+import google.auth
+
+# Automatic authentication using Cloud Run's service identity
+credentials, _ = google.auth.default()
+credentials_config = BigQueryCredentialsConfig(credentials=credentials)
+```
+
+**Service Account Format**: `{service-name}@{project-id}.iam.gserviceaccount.com`
+
+**Example**: `mabq-backend@datawarehouse-des.iam.gserviceaccount.com`
+
+<Warning>
+  Never grant `BigQuery Data Editor`, `BigQuery Data Owner`, or any admin roles to the service account. This would violate the read-only security model.
+</Warning>
+
+## Developer Persona: `MABQ_Dev`
+
+Developers are responsible for modifying source code (Python backend / Next.js frontend) and interacting with the CI/CD pipeline.
+
+### Repository Permissions
+
+- **Role**: Writer / Contributor
+- **Capabilities**:
+  - Create branches
+  - Push commits
+  - Create and merge Pull Requests
+  - Trigger CI/CD workflows
+
+### Google Cloud Platform Permissions
+
+<Accordion title="Cloud Run Viewer">
+  **Purpose**: Monitor deployed services
+  
+  **Capabilities**:
+  - View service configurations for `mabq-frontend` and `mabq-backend`
+  - Read application logs for debugging
+  - Monitor service health and metrics
+  - View current deployments and revisions
+  
+  **Cannot**:
+  - Modify service configurations
+  - Deploy new versions
+  - Change environment variables
+</Accordion>
+
+<Accordion title="Cloud Build Viewer">
+  **Purpose**: Monitor CI/CD pipeline status
+  
+  **Capabilities**:
+  - View build logs and history
+  - Monitor deployment status
+  - Debug failed builds
+  - Track build triggers
+  
+  **Cannot**:
+  - Modify build configurations
+  - Create or edit triggers
+  - Manually trigger builds
+</Accordion>
+
+### Typical Developer Workflow
+
+<Steps>
+  <Step title="Clone repository and create feature branch">
+    ```bash
+    git clone <repository-url>
+    git checkout -b feature/my-feature
+    ```
+  </Step>
+  
+  <Step title="Develop and test locally">
+    Modify code and test using local development environment with mock authentication.
+  </Step>
+  
+  <Step title="Push changes and create PR">
+    ```bash
+    git push origin feature/my-feature
+    # Create Pull Request in repository UI
+    ```
+  </Step>
+  
+  <Step title="Monitor automated deployment">
+    Use **Cloud Build Viewer** permissions to monitor the CI/CD pipeline as it builds and deploys to Cloud Run.
+  </Step>
+  
+  <Step title="Verify deployment in staging">
+    Use **Cloud Run Viewer** permissions to check logs and confirm the deployment succeeded.
+  </Step>
+</Steps>
+
+## Infrastructure Administrator Persona
+
+Infrastructure administrators manage cloud resources, scaling, and environment configuration.
+
+### Google Cloud Platform Permissions
+
+<Accordion title="Cloud Run Admin">
+  **Purpose**: Full control over Cloud Run services
+  
+  **Capabilities**:
+  - Modify CPU and memory allocation
+  - Adjust auto-scaling parameters (min/max instances, concurrency)
+  - Update environment variables
+  - Manage service networking and ingress settings
+  - Deploy new revisions manually
+  - Rollback to previous revisions
+  
+  **Region**: `us-east4` (where `mabq-frontend` and `mabq-backend` are deployed)
+  
+  **Example Task**: Increase backend memory from 512MB to 1GB to handle larger query results.
+</Accordion>
+
+<Accordion title="Cloud Build Editor">
+  **Purpose**: Manage CI/CD pipeline configuration
+  
+  **Capabilities**:
+  - Create and modify build triggers
+  - Update build configuration files
+  - Configure trigger conditions (branch patterns, tags)
+  - Manage build substitution variables
+  
+  **Example Task**: Create a new trigger for deploying to a staging environment from the `develop` branch.
+</Accordion>
+
+<Accordion title="Secret Manager Admin (Optional)">
+  **Purpose**: Manage sensitive configuration data
+  
+  **Capabilities**:
+  - Create and update secrets
+  - Grant service accounts access to specific secrets
+  - Rotate credentials and API keys
+  - Audit secret access logs
+  
+  **Use Case**: Migrate Azure AD credentials (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`) from environment variables to Secret Manager for enhanced security.
+</Accordion>
+
+### Critical Configuration Variables
+
+Infrastructure admins manage these environment variables in Cloud Run:
+
+#### Backend Service Variables
+
+```bash
+# Azure AD Authentication
+AZURE_TENANT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+AZURE_CLIENT_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+# Frontend CORS
+FRONTEND_URL=https://mabq-frontend-1093163678323.us-east4.run.app
+
+# BigQuery Configuration
+PROJECT_ID=datawarehouse-des
+BIGQUERY_DATASET=STG_ACTIVOS
+GOOGLE_CLOUD_LOCATION=us-east4
+
+# Company Settings
+NOMBRE_EMPRESA=TRANSELEC S.A.
+
+# AI Model Configuration
+ANALYTICS_AGENT_MODEL=gemini-2.5-pro
+LLM_1_NAME=bigquery_agent_stg_activos
+LLM_1_MODELO=gemini-2.5-pro
+```
+
+## Identity Administrator Persona
+
+Identity administrators manage the integration between Microsoft Azure AD and the MABQ application.
+
+### Microsoft Azure (Entra ID) Permissions
+
+<Accordion title="Cloud Application Administrator">
+  **Purpose**: Manage Azure AD app registrations
+  
+  **Capabilities**:
+  - Access **App Registrations** in Azure Portal
+  - Modify application manifest
+  - Update Redirect URIs (Reply URLs)
+  - Configure API permissions and scopes
+  - Manage certificates and secrets
+  - Execute **Admin Consent** for permission changes
+  
+  **Critical Tasks**:
+  - Update `replyUrls` when frontend URL changes
+  - Rotate client secrets before expiration
+  - Grant delegated permissions for Microsoft Graph API
+</Accordion>
+
+### Microsoft Teams Permissions
+
+<Accordion title="Teams App Management">
+  **Purpose**: Deploy and update the MABQ Teams application
+  
+  **Capabilities**:
+  - Access **Developer Portal for Teams**
+  - Upload custom app packages (`.zip` manifests)
+  - Update app configuration and permissions
+  - Publish to organization's app catalog
+  - Manage app availability for users
+  
+  **Required When**:
+  - Frontend URL changes (update manifest)
+  - Bot capabilities are added
+  - App name or description changes
+</Accordion>
+
+### Azure AD Configuration Requirements
+
+<Steps>
+  <Step title="Register application in Azure AD">
+    Create an app registration with platform type **Single-page application (SPA)**.
+  </Step>
+  
+  <Step title="Configure redirect URIs">
+    Add the Cloud Run frontend URL:
+    ```
+    https://mabq-frontend-1093163678323.us-east4.run.app
+    ```
+  </Step>
+  
+  <Step title="Configure API permissions">
+    Grant the following Microsoft Graph permissions:
+    - `User.Read` (Delegated)
+    - `email` (Delegated)
+    - `openid` (Delegated)
+    - `profile` (Delegated)
+  </Step>
+  
+  <Step title="Execute admin consent">
+    Grant admin consent for the entire organization to pre-authorize these permissions.
+  </Step>
+  
+  <Step title="Note credentials">
+    Record the **Application (client) ID** and **Directory (tenant) ID** for use in backend environment variables.
+  </Step>
+</Steps>
+
+## Permission Matrix
+
+| Resource | Service Account | Developer | Infra Admin | Identity Admin |
+|----------|----------------|-----------|-------------|----------------|
+| **BigQuery Data** | Read Only | None | None | None |
+| **BigQuery Jobs** | Execute | None | None | None |
+| **Vertex AI Models** | Invoke | None | None | None |
+| **Cloud Run Services** | N/A | View | Full Control | None |
+| **Cloud Build** | N/A | View | Edit | None |
+| **Azure App Registration** | N/A | None | None | Full Control |
+| **Teams App Manifest** | N/A | None | None | Full Control |
+| **Secret Manager** | Read (if used) | None | Admin | None |
+
+## Security Best Practices
+
+<Warning>
+  **Never share service account keys**. Cloud Run uses Workload Identity and automatic credential injection. There is no need to download JSON key files.
+</Warning>
+
+<Note>
+  **Rotate Azure AD client secrets** every 6-12 months. Set calendar reminders before expiration to prevent authentication outages.
+</Note>
+
+### Principle of Least Privilege
+
+1. **Service accounts**: Only grant the three required roles (Data Viewer, Job User, Vertex AI User)
+2. **Developers**: View-only access to production; full access to development environments
+3. **Admins**: Separate infrastructure and identity admin roles; no single person needs both
+
+### Audit Logging
+
+Enable Cloud Audit Logs for:
+- **Admin Activity**: All Cloud Run configuration changes
+- **Data Access**: BigQuery query execution (for compliance)
+- **System Events**: Service account authentication events
+
+### Emergency Access
+
+Maintain a **break-glass procedure** for emergency scenarios:
+1. Identify 2-3 super admins with Owner role (use sparingly)
+2. Document their contact information
+3. Require them to enable 2FA and use hardware security keys
+4. Audit their access monthly
+
+## Verification Checklist
+
+Use this checklist when onboarding new team members:
+
+- [ ] Service account has exactly 3 IAM roles (no more, no less)
+- [ ] Developers can view logs but cannot modify Cloud Run services
+- [ ] Infrastructure admins can scale services and update environment variables
+- [ ] Identity admins can modify Azure AD app registration
+- [ ] No one has downloaded service account JSON keys
+- [ ] All Azure AD client secrets have expiration dates set
+- [ ] Cloud Audit Logs are enabled for all critical resources
+- [ ] Team members have tested their permissions in a sandbox environment
+
+## Related Documentation
+
+- [Azure AD Authentication](/security/azure-ad-authentication) - JWT validation flow
+- [Security Guardrails](/security/security-guardrails) - Read-only enforcement
+- [Deployment](/deployment/cloud-run) - Cloud Run service configuration

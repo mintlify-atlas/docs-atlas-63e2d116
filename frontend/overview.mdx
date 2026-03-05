@@ -1,0 +1,198 @@
+---
+title: Frontend Overview
+description: Architecture and structure of the MABQ BigQuery Agent Next.js frontend
+---
+
+The MABQ BigQuery Agent frontend is a Next.js application that provides an intelligent chat interface for querying BigQuery data. It integrates CopilotKit for AI-powered conversations and the Microsoft Teams SDK for secure authentication.
+
+## Key Technologies
+
+The frontend is built with modern web technologies optimized for performance and developer experience:
+
+<CodeGroup>
+```json package.json
+{
+  "dependencies": {
+    "@ag-ui/client": "^0.0.44",
+    "@copilotkit/react-core": "^1.51.3",
+    "@copilotkit/react-ui": "^1.51.3",
+    "@copilotkit/runtime": "^1.51.3",
+    "@microsoft/teams-js": "^2.48.1",
+    "next": "16.1.6",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  }
+}
+```
+</CodeGroup>
+
+### Core Dependencies
+
+- **Next.js 16.1.6**: React framework with App Router for server-side rendering and routing
+- **React 19.2.3**: Latest React version with improved hooks and concurrent features
+- **@copilotkit/react-core & react-ui**: AI chat interface and runtime integration
+- **@microsoft/teams-js**: Microsoft Teams SDK for authentication and context
+- **@ag-ui/client**: HTTP agent client for backend communication
+- **TailwindCSS 4**: Utility-first CSS framework for styling
+
+## Application Structure
+
+The frontend follows Next.js App Router conventions:
+
+<Steps>
+  <Step title="App Router Structure">
+    ```
+    frontend-agente/
+    ├── app/
+    │   ├── page.tsx              # Main home page component
+    │   ├── api/
+    │   │   └── copilotkit/
+    │   │       └── route.ts      # CopilotKit runtime endpoint
+    │   └── layout.tsx            # Root layout
+    ├── package.json
+    └── tailwind.config.ts
+    ```
+  </Step>
+
+  <Step title="Client-Side Rendering">
+    The main page is a client component (`"use client"`) that manages:
+    - Microsoft Teams authentication
+    - CopilotKit runtime connection
+    - Chat interface rendering
+  </Step>
+
+  <Step title="API Routes">
+    The `/api/copilotkit` route handles:
+    - Backend agent communication
+    - Authorization header forwarding
+    - Runtime configuration
+  </Step>
+</Steps>
+
+## Main Page Component
+
+The home page (`app/page.tsx`) orchestrates the entire application flow:
+
+<CodeGroup>
+```tsx app/page.tsx
+"use client";
+
+import { CopilotKit } from "@copilotkit/react-core";
+import { CopilotChat } from "@copilotkit/react-ui";
+import "@copilotkit/react-ui/styles.css";
+import { useEffect, useState } from "react";
+import * as microsoftTeams from "@microsoft/teams-js";
+
+export default function Home() {
+  const [authToken, setAuthToken] = useState<string>("");
+  const [userName, setUserName] = useState<string>("");
+  const [isTeams, setIsTeams] = useState<boolean | null>(null); 
+  const [tokenReady, setTokenReady] = useState<boolean>(false);
+
+  useEffect(() => {
+    microsoftTeams.app.initialize()
+      .then(() => {
+        setIsTeams(true);
+        
+        microsoftTeams.app.getContext().then((context) => {
+          if (context.user) setUserName(context.user.displayName || "");
+        });
+
+        // token
+        microsoftTeams.authentication.getAuthToken()
+          .then((token) => {
+            console.log(" Token seguro recibido, encendiendo el chat..."); 
+            setAuthToken(token);
+            setTokenReady(true)
+          })
+          .catch((error) => {
+            console.error(" Error obteniendo token:", error);
+          });
+      })
+      .catch(() => {
+        console.log(" Modo Web detectado");
+        setIsTeams(false);
+      });
+  }, []);
+
+  if (isTeams === false) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-red-50 text-red-600 font-semibold">
+         Acceso Restringido. Esta app solo funciona dentro de Microsoft Teams.
+      </div>
+    );
+  }
+
+  if (isTeams === null || !tokenReady) {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center bg-gray-50">
+        <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
+        <p className="text-lg text-gray-600 font-medium">Autenticando de forma segura...</p>
+      </div>
+    );
+  }
+  return (
+    <CopilotKit 
+      runtimeUrl="/api/copilotkit" 
+      agent="default_agent"
+      headers={{
+        "Authorization": `Bearer ${authToken}`,
+        "X-Visual-Name": userName 
+      }}
+    >
+      <main className="flex h-screen w-full flex-col bg-white">
+        <CopilotChat
+          className="h-full w-full"
+          instructions="Ayuda con consultas SQL de BigQuery. Responde con tablas y datos precisos."
+          labels={{
+            title: "Asistente MABQ",
+            initial: `Hola ${userName ? userName.split(' ')[0] : ''}. . Soy un asistente SQL para tus preguntas de datos, en la primera pregunta me toma tiempo para ejecutar, ¿Con qué duda te puedo ayudar? `,
+          }}
+        />
+      </main>
+    </CopilotKit>
+  );
+}
+```
+</CodeGroup>
+
+## Component Lifecycle
+
+<Steps>
+  <Step title="Initialization">
+    On mount, the component attempts to initialize the Microsoft Teams SDK to detect the runtime environment.
+  </Step>
+
+  <Step title="Authentication">
+    If Teams is detected, the app:
+    - Retrieves the user context (display name)
+    - Requests an authentication token via `getAuthToken()`
+    - Sets `tokenReady` to `true` when complete
+  </Step>
+
+  <Step title="Access Control">
+    If Teams is NOT detected (`isTeams === false`), the app displays an access restriction message.
+  </Step>
+
+  <Step title="Chat Rendering">
+    Once authenticated, the CopilotKit provider wraps the CopilotChat component with:
+    - Authorization header containing the Teams token
+    - User's display name in custom header
+    - Backend runtime URL
+  </Step>
+</Steps>
+
+<Note>
+  The application enforces Teams-only access for security. Users attempting to access the app outside of Microsoft Teams will see a restriction message.
+</Note>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="CopilotKit Integration" icon="robot" href="/frontend/copilotkit-integration">
+    Learn how CopilotKit connects to the backend agent
+  </Card>
+  <Card title="Teams Integration" icon="users" href="/frontend/teams-integration">
+    Understand Microsoft Teams SDK authentication
+  </Card>
+</CardGroup>

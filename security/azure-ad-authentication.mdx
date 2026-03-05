@@ -1,0 +1,270 @@
+---
+title: 'Azure AD Authentication'
+description: 'JWT token validation and Azure AD integration for secure access control'
+icon: 'shield-check'
+---
+
+## Overview
+
+MABQ implements enterprise-grade authentication using **Microsoft Azure AD** (Entra ID) with JWT token validation. All API requests must include a valid Bearer token issued by Azure AD for users in the `@transelec.cl` domain.
+
+<Warning>
+  All endpoints (except `/health`, `/docs`, and OPTIONS requests) require a valid JWT token with RSA signature verification.
+</Warning>
+
+## Authentication Flow
+
+<Steps>
+  <Step title="User authenticates with Azure AD">
+    The frontend application redirects users to Azure AD login. Users must authenticate with their corporate credentials (`@transelec.cl`).
+  </Step>
+  
+  <Step title="Azure AD issues JWT token">
+    Upon successful authentication, Azure AD issues a JWT token signed with RS256 algorithm containing user claims (email, name, tenant ID).
+  </Step>
+  
+  <Step title="Frontend sends token in Authorization header">
+    The frontend includes the token in the `Authorization: Bearer <token>` header for all API requests.
+  </Step>
+  
+  <Step title="Backend validates token">
+    The FastAPI middleware validates the token's signature, audience, issuer, expiration, and domain restriction.
+  </Step>
+  
+  <Step title="User profile stored in request state">
+    After successful validation, the user profile is extracted and stored in `request.state.user` for use in downstream handlers.
+  </Step>
+</Steps>
+
+## JWT Validation Middleware
+
+The authentication middleware performs comprehensive token validation on every request:
+
+```python
+@app.middleware("http")
+async def strict_security_middleware(request: Request, call_next):
+    if request.method == "OPTIONS" or request.url.path in ["/docs", "/openapi.json", "/health"]:
+        return await call_next(request)
+    if request.method == "GET" and request.url.path == "/":
+        return await call_next(request)
+
+    user_profile = None
+    denial_reason = "No se proporcionó token de autenticación"
+    auth_header = request.headers.get("Authorization", "")
+
+    if auth_header.startswith("Bearer "):
+        try:
+            raw_token = auth_header.split(" ")[1]
+            token = raw_token.strip().strip('"').strip("'").rstrip(',')
+            segmentos = len(token.split('.'))
+            logger.info(f" [AUTOPSIA] Token empieza con: {token[:15]} | Termina con: {token[-10:]}")
+            logger.info(f" [AUTOPSIA] Longitud: {len(token)} | Cantidad de puntos (.): {segmentos - 1}")
+            
+            if segmentos != 3:
+                logger.error(" [AUTOPSIA] EL TOKEN NO ES UN JWT VÁLIDO. No tiene 3 partes.")
+
+            try:
+                unverified_header = jwt.get_unverified_header(token)
+                unverified_payload = jwt.decode(token, options={"verify_signature": False})
+                logger.info(f" [DEBUG] HEADER DEL TOKEN: {unverified_header}")
+                logger.info(f" [DEBUG] PAYLOAD DEL TOKEN: {unverified_payload}")
+            except Exception as debug_error:
+                logger.error(f" [DEBUG] Error al intentar leer el token sin firma: {str(debug_error)}")
+
+            TENANT_ID = os.environ["AZURE_TENANT_ID"]
+            CLIENT_ID = os.environ["AZURE_CLIENT_ID"]
+
+            # VALIDACIÓN ESTRICTA (Matemática RSA)
+            jwks_client = jwt.PyJWKClient(
+                f"https://login.microsoftonline.com/{TENANT_ID}/discovery/v2.0/keys"
+            )
+            signing_key = jwks_client.get_signing_key_from_jwt(token)
+
+            payload = jwt.decode(
+                token,
+                signing_key.key,
+                algorithms=["RS256"],
+                audience=CLIENT_ID,
+                issuer=[
+                    f"https://login.microsoftonline.com/{TENANT_ID}/v2.0",
+                    f"https://sts.windows.net/{TENANT_ID}/"
+                ]
+            )
+            
+            token_email = payload.get("preferred_username") or payload.get("upn") or payload.get("email")
+            token_name = payload.get("name", "Usuario")
+            
+            if token_email and str(token_email).lower().endswith("@transelec.cl"):
+                user_profile = {
+                    "email": token_email,
+                    "name": token_name,
+                    "tid": payload.get("tid") 
+                }
+            else:
+                denial_reason = f"Dominio no autorizado. Email: {token_email}"
+                
+        except jwt.ExpiredSignatureError:
+            denial_reason = "El token ha expirado."
+        except jwt.InvalidSignatureError:
+            denial_reason = "FIRMA INVÁLIDA."
+        except Exception as e:
+            denial_reason = f"Error crítico validando token: {str(e)}"
+
+    if not user_profile:
+        logger.warning(f" BLOQUEO DE ACCESO | Motivo: {denial_reason}")
+        return JSONResponse(status_code=403, content={"error": f"Acceso Denegado. {denial_reason}"})
+
+    logger.info(f" PERFIL VERIFICADO | Email: {user_profile['email']}")
+    request.state.user = user_profile
+    return await call_next(request)
+```
+
+<Note>
+  The middleware is defined in `main.py:32-108` and runs on every HTTP request before reaching the endpoint handlers.
+</Note>
+
+## Token Validation Process
+
+### 1. RS256 Signature Verification
+
+The middleware uses **RSA public key cryptography** to verify the token signature:
+
+- Fetches Azure AD's public keys from the JWKS endpoint: `https://login.microsoftonline.com/{TENANT_ID}/discovery/v2.0/keys`
+- Uses `PyJWKClient` to retrieve the correct signing key based on the token's `kid` (key ID)
+- Verifies the signature using the RS256 algorithm
+
+```python
+jwks_client = jwt.PyJWKClient(
+    f"https://login.microsoftonline.com/{TENANT_ID}/discovery/v2.0/keys"
+)
+signing_key = jwks_client.get_signing_key_from_jwt(token)
+```
+
+### 2. Audience Validation
+
+Ensures the token was issued for this specific application:
+
+```python
+audience=CLIENT_ID,  # Must match AZURE_CLIENT_ID environment variable
+```
+
+### 3. Issuer Validation
+
+Verifies the token was issued by the correct Azure AD tenant:
+
+```python
+issuer=[
+    f"https://login.microsoftonline.com/{TENANT_ID}/v2.0",
+    f"https://sts.windows.net/{TENANT_ID}/"
+]
+```
+
+### 4. Domain Restriction
+
+Only users with `@transelec.cl` email addresses are permitted:
+
+```python
+token_email = payload.get("preferred_username") or payload.get("upn") or payload.get("email")
+
+if token_email and str(token_email).lower().endswith("@transelec.cl"):
+    user_profile = {
+        "email": token_email,
+        "name": token_name,
+        "tid": payload.get("tid") 
+    }
+else:
+    denial_reason = f"Dominio no autorizado. Email: {token_email}"
+```
+
+## User Profile Extraction
+
+After successful validation, the user profile is extracted from the JWT claims and stored in the request state:
+
+```python
+user_profile = {
+    "email": token_email,      # From preferred_username, upn, or email claim
+    "name": token_name,        # From name claim
+    "tid": payload.get("tid")  # Azure AD tenant ID
+}
+
+request.state.user = user_profile
+```
+
+This profile is then accessible to all downstream request handlers for audit logging and personalization.
+
+## Error Handling
+
+<Accordion title="Token Expired">
+  **HTTP 403**: `"El token ha expirado."`
+  
+  The user needs to re-authenticate with Azure AD to obtain a fresh token.
+</Accordion>
+
+<Accordion title="Invalid Signature">
+  **HTTP 403**: `"FIRMA INVÁLIDA."`
+  
+  The token's signature doesn't match Azure AD's public key. This indicates tampering or misconfiguration.
+</Accordion>
+
+<Accordion title="Unauthorized Domain">
+  **HTTP 403**: `"Dominio no autorizado. Email: {email}"`
+  
+  The user's email doesn't end with `@transelec.cl`.
+</Accordion>
+
+<Accordion title="Missing Token">
+  **HTTP 403**: `"No se proporcionó token de autenticación"`
+  
+  No `Authorization` header was provided in the request.
+</Accordion>
+
+## Environment Variables
+
+The authentication system requires these Azure AD configuration variables:
+
+| Variable | Description | Example |
+|----------|-------------|----------|
+| `AZURE_TENANT_ID` | Azure AD tenant identifier | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
+| `AZURE_CLIENT_ID` | Application (client) ID from Azure AD app registration | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
+
+<Warning>
+  These values must match the Azure AD app registration configuration. Mismatched values will cause all authentication attempts to fail.
+</Warning>
+
+## Audit Logging
+
+All authentication events are logged for security monitoring:
+
+```python
+# Successful authentication
+logger.info(f" PERFIL VERIFICADO | Email: {user_profile['email']}")
+
+# Failed authentication
+logger.warning(f" BLOQUEO DE ACCESO | Motivo: {denial_reason}")
+```
+
+Logs include token diagnostics for troubleshooting:
+- Token prefix and suffix
+- Token length
+- JWT segment count validation
+- Unverified header and payload inspection
+
+## CORS Configuration
+
+CORS is strictly configured to only accept requests from the authorized frontend:
+
+```python
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "https://mabq-frontend-1093163678323.us-east4.run.app")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[FRONTEND_URL], 
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+```
+
+<Note>
+  The frontend URL must be configured in the `FRONTEND_URL` environment variable to prevent cross-origin attacks.
+</Note>

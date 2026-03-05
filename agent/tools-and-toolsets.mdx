@@ -1,0 +1,598 @@
+---
+title: 'Tools and Toolsets'
+description: 'Understanding BigQueryToolset, security modes, and tool execution in the agent'
+---
+
+## Overview
+
+The MABQ BigQuery Agent uses **Google ADK Tools** to interact with BigQuery. Tools enable the agent to execute queries, validate SQL syntax, and retrieve schema information.
+
+<Note>
+Tools are functions that the LLM can invoke to perform actions beyond text generation. In this agent, the `BigQueryToolset` provides query execution capabilities.
+</Note>
+
+## BigQueryToolset
+
+The `BigQueryToolset` is a collection of tools for interacting with BigQuery datasets.
+
+### Initialization
+
+Configured in `agent.py:32-35`:
+
+```python
+bigquery_toolset = BigQueryToolset(
+  credentials_config=credentials_config, 
+  bigquery_tool_config=tool_config
+)
+```
+
+### Configuration Components
+
+<Steps>
+  <Step title="Credentials Configuration">
+    Provides authentication to BigQuery:
+    ```python
+    credentials, _ = google.auth.default()
+    credentials_config = BigQueryCredentialsConfig(credentials=credentials)
+    ```
+  </Step>
+  
+  <Step title="Tool Configuration">
+    Controls security and operational settings:
+    ```python
+    tool_config = BigQueryToolConfig(
+        write_mode=WriteMode.BLOCKED,
+    )
+    ```
+  </Step>
+</Steps>
+
+### Included Tools
+
+The `BigQueryToolset` provides multiple tools to the agent:
+
+| Tool | Purpose | Usage |
+|------|---------|-------|
+| **Query Executor** | Runs SQL queries and returns results | Primary tool for data retrieval |
+| **Schema Inspector** | Lists tables and column definitions | Validates table/column existence |
+| **Query Validator** | Checks SQL syntax without execution | Pre-execution validation |
+| **Metadata Reader** | Retrieves dataset and table metadata | Understands data structure |
+
+<Accordion title="Tool Selection Process">
+The agent automatically selects which tool to use based on the user's request:
+
+```python
+# User: "What tables are in the dataset?"
+# Agent uses: Schema Inspector
+
+# User: "Show me all active assets"
+# Agent uses: Query Executor
+
+# User: "Is this SQL valid: SELECT * FROM assets"
+# Agent uses: Query Validator
+```
+
+The LLM determines tool selection based on the instruction prompt and user intent.
+</Accordion>
+
+## WriteMode.BLOCKED Security Setting
+
+The most critical security feature of the agent is the `WriteMode.BLOCKED` configuration.
+
+### Configuration
+
+Defined in `agent.py:24-26`:
+
+```python
+tool_config = BigQueryToolConfig(
+    write_mode=WriteMode.BLOCKED,  # ← Enforces read-only mode
+)
+```
+
+### How WriteMode.BLOCKED Works
+
+<Steps>
+  <Step title="Query Analysis">
+    Before execution, the toolset analyzes the SQL statement to detect write operations.
+  </Step>
+  
+  <Step title="Write Detection">
+    Identifies prohibited keywords:
+    - `INSERT`, `UPDATE`, `DELETE`
+    - `CREATE`, `ALTER`, `DROP`
+    - `TRUNCATE`, `MERGE`
+    - `GRANT`, `REVOKE`
+  </Step>
+  
+  <Step title="Rejection">
+    If write operations are detected, the tool raises an error before executing the query.
+  </Step>
+</Steps>
+
+### WriteMode Comparison
+
+<CodeGroup>
+```python BLOCKED (Production)
+tool_config = BigQueryToolConfig(
+    write_mode=WriteMode.BLOCKED,
+)
+
+# Behavior:
+# SELECT queries: ✓ Allowed
+# INSERT/UPDATE/DELETE: ✗ Blocked with error
+# CREATE/ALTER/DROP: ✗ Blocked with error
+```
+
+```python ALLOWED (Development Only)
+tool_config = BigQueryToolConfig(
+    write_mode=WriteMode.ALLOWED,
+)
+
+# Behavior:
+# SELECT queries: ✓ Allowed
+# INSERT/UPDATE/DELETE: ✓ Allowed
+# CREATE/ALTER/DROP: ✓ Allowed
+
+# ⚠️ WARNING: Only use in isolated development environments
+```
+</CodeGroup>
+
+<Warning>
+**Never use `WriteMode.ALLOWED` in production**. The current configuration with `WriteMode.BLOCKED` is the only safe setting for production analytics agents.
+</Warning>
+
+### Error Handling with WriteMode.BLOCKED
+
+When a write operation is attempted:
+
+```python
+# User request: "Delete all inactive assets"
+
+# Agent generates SQL:
+# DELETE FROM `datawarehouse-des.STG_ACTIVOS.assets`
+# WHERE status = 'inactive'
+
+# BigQueryToolset behavior:
+# 1. Detects DELETE statement
+# 2. Raises WriteOperationBlockedError
+# 3. Agent receives error feedback
+
+# Agent response (per instruction prompt):
+# "Lo siento, por seguridad corporativa tengo acceso de solo lectura a los datos de TRANSELEC S.A."
+```
+
+## Tool Execution in the Agent
+
+The agent uses tools through a structured execution flow.
+
+### Execution Flow
+
+<Steps>
+  <Step title="User Request">
+    User submits a natural language question:
+    ```
+    "¿Cuántos activos tenemos en total?"
+    ```
+  </Step>
+  
+  <Step title="SQL Generation">
+    Agent generates candidate SQL based on instruction prompt:
+    ```sql
+    SELECT COUNT(*) as total_activos
+    FROM `datawarehouse-des.STG_ACTIVOS.assets`
+    ```
+  </Step>
+  
+  <Step title="Tool Invocation">
+    Agent calls BigQueryToolset to validate and execute:
+    ```python
+    result = bigquery_toolset.execute_query(sql_candidate)
+    ```
+  </Step>
+  
+  <Step title="Result Processing">
+    Tool returns execution results or errors:
+    ```json
+    {
+      "success": true,
+      "rows": [{"total_activos": 1523}],
+      "schema": [...]
+    }
+    ```
+  </Step>
+  
+  <Step title="Response Formatting">
+    Agent formats the response per instruction guidelines:
+    ```sql
+    SELECT COUNT(*) as total_activos
+    FROM `datawarehouse-des.STG_ACTIVOS.assets`
+    ```
+  </Step>
+</Steps>
+
+### Mandatory Tool Usage
+
+The instruction prompt **requires** tool usage for data queries:
+
+```python
+# From agent.py:56-57
+"""
+2. EJECUCIÓN OBLIGATORIA: Para cualquier pregunta de datos, DEBES usar la herramienta `bigquery_toolset` para probar que tu query funciona.
+"""
+```
+
+<Note>
+The agent cannot return SQL without first validating it through the BigQueryToolset. This ensures all generated queries are syntactically correct and executable.
+</Note>
+
+### Tool Usage Examples
+
+<Accordion title="Simple Query">
+**User**: "Show all assets"
+
+**Agent Process**:
+1. Generate SQL: `SELECT * FROM \`datawarehouse-des.STG_ACTIVOS.assets\``
+2. Execute via toolset to validate
+3. Receive confirmation query works
+4. Return SQL to user
+
+**User Receives**:
+```sql
+SELECT * 
+FROM `datawarehouse-des.STG_ACTIVOS.assets`
+```
+</Accordion>
+
+<Accordion title="Complex Aggregation">
+**User**: "What is the average maintenance cost by asset type?"
+
+**Agent Process**:
+1. Generate SQL:
+```sql
+SELECT 
+  asset_type,
+  AVG(maintenance_cost) as avg_cost
+FROM `datawarehouse-des.STG_ACTIVOS.assets`
+GROUP BY asset_type
+ORDER BY avg_cost DESC
+```
+2. Execute via toolset
+3. Verify query returns expected schema
+4. Return SQL to user
+</Accordion>
+
+<Accordion title="Write Attempt (Blocked)">
+**User**: "Delete all old records"
+
+**Agent Process**:
+1. Generate SQL: `DELETE FROM \`datawarehouse-des.STG_ACTIVOS.assets\` WHERE date < '2020-01-01'`
+2. Execute via toolset
+3. **Tool raises WriteOperationBlockedError**
+4. Agent receives error feedback
+5. Instruction prompt triggers rejection message
+
+**User Receives**:
+```
+Lo siento, por seguridad corporativa tengo acceso de solo lectura a los datos de TRANSELEC S.A.
+```
+</Accordion>
+
+## Integration with Instruction Prompt
+
+The instruction prompt explicitly references and guides tool usage.
+
+### Tool Reference
+
+From `agent.py:50-52`:
+
+```python
+<INSTRUCTIONS>
+  - Tienes acceso a `bigquery_toolset`.
+  - Tu prioridad absoluta es la sintaxis correcta y el uso de los nombres de tabla reales.
+</INSTRUCTIONS>
+```
+
+### Operational Rules
+
+The prompt defines how tools should be used:
+
+```python
+# agent.py:56-67
+"""
+Reglas:
+1. SALUDOS: Si es un saludo ("hola"), responde breve y amable.
+2. EJECUCIÓN OBLIGATORIA: Para cualquier pregunta de datos, DEBES usar la herramienta `bigquery_toolset` para probar que tu query funciona.
+3. SALIDA FINAL ESTRICTA:
+   Una vez que la herramienta confirme que la query funciona, tu respuesta final al usuario debe ser **EXCLUSIVAMENTE** el bloque de código SQL.
+   
+   PROHIBIDO:
+   - No escribas "Aquí está la consulta".
+   - No expliques qué hace la consulta.
+   - No resumas los datos encontrados.
+"""
+```
+
+### Prompt-Tool Synergy
+
+<Steps>
+  <Step title="Tool Awareness">
+    The prompt informs the LLM that it has access to `bigquery_toolset`.
+  </Step>
+  
+  <Step title="Mandatory Usage">
+    The prompt requires tool usage for all data questions.
+  </Step>
+  
+  <Step title="Validation Focus">
+    The prompt emphasizes using tools to verify syntax and table names.
+  </Step>
+  
+  <Step title="Output Formatting">
+    After tool confirmation, the prompt dictates the exact response format.
+  </Step>
+</Steps>
+
+## Tool Configuration Best Practices
+
+### Security Practices
+
+<CodeGroup>
+```python Production (Recommended)
+tool_config = BigQueryToolConfig(
+    write_mode=WriteMode.BLOCKED,  # ✓ Always use in production
+)
+```
+
+```python Development (Isolated Environments Only)
+tool_config = BigQueryToolConfig(
+    write_mode=WriteMode.ALLOWED,  # ⚠️ Only for dev/test
+)
+
+# Use separate projects for development:
+# - Development: datawarehouse-dev
+# - Production: datawarehouse-prod
+```
+</CodeGroup>
+
+### Credential Management
+
+<Steps>
+  <Step title="Use Application Default Credentials">
+    Prefer `google.auth.default()` over service account keys:
+    ```python
+    credentials, _ = google.auth.default()  # ✓ Recommended
+    ```
+  </Step>
+  
+  <Step title="Avoid Hardcoded Credentials">
+    Never embed credentials in source code:
+    ```python
+    # ✗ NEVER do this
+    credentials = service_account.Credentials.from_service_account_file(
+        "/path/to/key.json"
+    )
+    ```
+  </Step>
+  
+  <Step title="Use Environment Variables">
+    For service account keys (if required):
+    ```bash
+    export GOOGLE_APPLICATION_CREDENTIALS="/secure/path/to/key.json"
+    ```
+  </Step>
+</Steps>
+
+### Monitoring Tool Usage
+
+Track tool execution for debugging and optimization:
+
+<Accordion title="Enable ADK Logging">
+```python
+import logging
+
+# Enable ADK debug logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger('google.adk')
+logger.setLevel(logging.DEBUG)
+
+# Tool executions will be logged:
+# DEBUG:google.adk.tools.bigquery:Executing query: SELECT ...
+# DEBUG:google.adk.tools.bigquery:Query completed in 1.23s
+```
+</Accordion>
+
+<Accordion title="Query Metrics">
+Monitor tool performance using BigQuery job history:
+
+```sql
+-- Check recent queries executed by the agent
+SELECT 
+  creation_time,
+  user_email,
+  query,
+  total_bytes_processed,
+  total_slot_ms
+FROM `region-us-east4`.INFORMATION_SCHEMA.JOBS_BY_PROJECT
+WHERE user_email = 'bigquery-agent@PROJECT_ID.iam.gserviceaccount.com'
+ORDER BY creation_time DESC
+LIMIT 100
+```
+</Accordion>
+
+## Adding Custom Tools
+
+While the agent currently uses only `BigQueryToolset`, you can add additional tools.
+
+### Example: Adding a Custom Validation Tool
+
+<Accordion title="Custom SQL Validator">
+```python
+from google.adk.tools import Tool
+from typing import Dict, Any
+import sqlglot  # Already in requirements.txt
+
+class SQLValidatorTool(Tool):
+    """Custom tool for advanced SQL validation"""
+    
+    def __init__(self):
+        super().__init__(
+            name="sql_validator",
+            description="Validates SQL syntax and checks for best practices"
+        )
+    
+    def execute(self, sql: str) -> Dict[str, Any]:
+        """Validate SQL and provide recommendations"""
+        try:
+            # Parse SQL
+            parsed = sqlglot.parse_one(sql, dialect="bigquery")
+            
+            # Check for SELECT *
+            has_select_star = "SELECT *" in sql.upper()
+            
+            # Check for LIMIT clause
+            has_limit = "LIMIT" in sql.upper()
+            
+            return {
+                "valid": True,
+                "warnings": [
+                    "Avoid SELECT * in production" if has_select_star else None,
+                    "Consider adding LIMIT for large tables" if not has_limit else None
+                ],
+                "parsed_structure": str(parsed)
+            }
+        except Exception as e:
+            return {
+                "valid": False,
+                "error": str(e)
+            }
+
+# Add to agent
+sql_validator = SQLValidatorTool()
+
+root_agent = LlmAgent(
+    model=LLM_1_MODELO,
+    name=LLM_1_NAME,
+    description="Agente para responder preguntas sobre datos y modelos de BigQuery",
+    instruction=new_instruction,
+    tools=[bigquery_toolset, sql_validator]  # ← Add custom tool
+)
+```
+</Accordion>
+
+<Note>
+When adding custom tools, update the instruction prompt to inform the agent about the new capabilities.
+</Note>
+
+## Troubleshooting Tool Execution
+
+<Accordion title="Tool Not Being Used">
+**Symptom**: Agent returns SQL without executing it
+
+**Causes**:
+1. Instruction prompt doesn't mandate tool usage
+2. Tool execution failed silently
+3. Agent doesn't recognize tool availability
+
+**Solutions**:
+```python
+# Ensure instruction mandates tool usage
+"""
+2. EJECUCIÓN OBLIGATORIA: Para cualquier pregunta de datos, 
+   DEBES usar la herramienta `bigquery_toolset` para probar que tu query funciona.
+"""
+
+# Verify tool is registered
+print(root_agent.tools)  # Should include bigquery_toolset
+```
+</Accordion>
+
+<Accordion title="WriteMode Errors">
+**Symptom**: Tool raises error even for SELECT queries
+
+**Cause**: Query might contain write operations in subqueries or CTEs
+
+**Solution**:
+```sql
+-- Check for hidden write operations
+-- ✗ This will be blocked:
+WITH temp AS (
+  INSERT INTO table VALUES (1, 2, 3)
+  RETURNING *
+)
+SELECT * FROM temp
+
+-- ✓ This is allowed:
+WITH temp AS (
+  SELECT * FROM existing_table
+)
+SELECT * FROM temp
+```
+</Accordion>
+
+<Accordion title="Credential Issues">
+**Symptom**: `google.auth.exceptions.DefaultCredentialsError`
+
+**Solutions**:
+```bash
+# Local development
+gcloud auth application-default login
+
+# Verify credentials
+gcloud auth application-default print-access-token
+
+# Cloud Run deployment
+# Ensure service account is attached to the service
+gcloud run services describe SERVICE_NAME --region=REGION
+```
+</Accordion>
+
+## Advanced Configuration
+
+### Query Timeout Settings
+
+<Accordion title="Configure BigQuery Job Timeout">
+```python
+from google.cloud import bigquery
+
+tool_config = BigQueryToolConfig(
+    write_mode=WriteMode.BLOCKED,
+    # Custom timeout (requires additional configuration)
+)
+
+# Note: Default timeout is typically sufficient (10 minutes)
+# For custom timeouts, configure at the BigQuery client level
+```
+</Accordion>
+
+### Result Size Limits
+
+<Accordion title="Control Query Result Size">
+```python
+# Update instruction prompt to guide agents on result limits
+new_instruction = f"""
+# ... existing prompt ...
+
+<QUERY_GUIDELINES>
+  - Para tablas grandes, usa LIMIT para restringir resultados
+  - Límite recomendado: LIMIT 1000 para exploraciones iniciales
+  - Para análisis completos, el usuario puede remover el LIMIT
+</QUERY_GUIDELINES>
+"""
+```
+</Accordion>
+
+---
+
+## Summary
+
+The MABQ BigQuery Agent's tool configuration provides:
+
+- **Secure Query Execution**: `WriteMode.BLOCKED` prevents data modification
+- **Automatic Validation**: Mandatory tool usage ensures SQL correctness
+- **Credential Management**: Automatic authentication via `google.auth.default()`
+- **Schema Discovery**: Built-in tools for exploring database structure
+- **Error Handling**: Graceful failure with security-aware messaging
+
+<Note>
+The combination of `BigQueryToolset`, `WriteMode.BLOCKED`, and security-focused instruction prompts creates a robust, production-ready analytics agent.
+</Note>

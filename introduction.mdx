@@ -1,0 +1,98 @@
+---
+title: Introduction
+description: Build natural language SQL queries for BigQuery with AI-powered agents
+---
+
+# MABQ BigQuery Agent
+
+MABQ is an AI-powered agent built with Google's Agent Development Kit (ADK) and Gemini 2.5 Pro that translates natural language questions into SQL queries for BigQuery. Designed for enterprise deployment, it combines powerful AI capabilities with robust security controls.
+
+## What is MABQ?
+
+MABQ (short for "Modelo Asistencial BigQuery") is a conversational AI assistant that allows users to query BigQuery datasets using natural language. Instead of writing SQL, users can ask questions like "Show me the top 10 assets by value" and receive accurate query results.
+
+The system consists of:
+- **Backend Agent**: Built with Google ADK, powered by Gemini 2.5 Pro LLM
+- **Frontend Interface**: Next.js application with CopilotKit integration
+- **Microsoft Teams Integration**: Deploy as a Teams app with SSO authentication
+- **Enterprise Security**: Azure AD authentication and read-only BigQuery access
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Natural Language to SQL" icon="wand-magic-sparkles">
+    Convert plain language questions to BigQuery SQL using Gemini 2.5 Pro
+  </Card>
+  <Card title="Enterprise Security" icon="shield-check">
+    Azure AD JWT authentication with read-only database controls
+  </Card>
+  <Card title="Teams Integration" icon="microsoft">
+    Deploy directly in Microsoft Teams for seamless enterprise adoption
+  </Card>
+  <Card title="Cloud Native" icon="cloud">
+    Serverless architecture on Google Cloud Run with auto-scaling
+  </Card>
+</CardGroup>
+
+## Architecture Highlights
+
+- **Google ADK Framework**: Built on Google's Agent Development Kit for production-grade agent orchestration
+- **Vertex AI Integration**: Direct access to Gemini 2.5 Pro through Vertex AI
+- **BigQuery Toolset**: Specialized tools for schema inspection and query execution
+- **Security Guardrails**: Prevents data modification with read-only mode enforcement
+- **FastAPI Backend**: High-performance async API with CORS and authentication middleware
+- **CopilotKit Frontend**: Modern chat interface with streaming responses
+
+## Use Cases
+
+MABQ enables business users, analysts, and developers to:
+
+- **Explore data** without SQL knowledge
+- **Generate reports** through conversational queries
+- **Validate datasets** with natural language questions
+- **Accelerate analytics** by reducing time from question to insight
+
+## Getting Started
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get MABQ running locally in 5 minutes
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/architecture">
+    Understand the system design and components
+  </Card>
+  <Card title="Agent Development" icon="robot" href="/agent/overview">
+    Learn how to configure and customize the agent
+  </Card>
+  <Card title="Deployment" icon="server" href="/deployment/cloud-run">
+    Deploy to Google Cloud Run for production
+  </Card>
+</CardGroup>
+
+## Technology Stack
+
+- **Agent Framework**: Google ADK (Agent Development Kit)
+- **LLM**: Gemini 2.5 Pro via Vertex AI
+- **Backend**: FastAPI (Python 3.11)
+- **Frontend**: Next.js 16, React 19, CopilotKit
+- **Data Layer**: BigQuery
+- **Authentication**: Azure AD (Microsoft Entra ID)
+- **Deployment**: Google Cloud Run (containerized)
+- **Integration**: Microsoft Teams SDK
+
+## Next Steps
+
+<Steps>
+  <Step title="Run the Quickstart">
+    Follow the [quickstart guide](/quickstart) to run MABQ locally and test natural language queries
+  </Step>
+  <Step title="Explore the Architecture">
+    Review the [architecture documentation](/architecture) to understand how components interact
+  </Step>
+  <Step title="Configure Your Agent">
+    Customize the agent's behavior and BigQuery access in [Agent Configuration](/agent/configuration)
+  </Step>
+  <Step title="Deploy to Production">
+    Deploy to Google Cloud Run following the [deployment guide](/deployment/cloud-run)
+  </Step>
+</Steps>
