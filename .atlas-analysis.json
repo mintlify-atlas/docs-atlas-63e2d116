@@ -1,0 +1,96 @@
+{
+  "projectType": "ai-ml",
+  "projectName": "MABQ BigQuery Agent",
+  "projectDescription": "An AI-powered agent built with Google ADK and Gemini that translates natural language to SQL queries for BigQuery with enterprise security.",
+  "theme": "aspen",
+  "primaryColor": "#4285F4",
+  "lightColor": "#669DF6",
+  "darkColor": "#1967D2",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "architecture"
+            ]
+          },
+          {
+            "group": "Agent Development",
+            "pages": [
+              "agent/overview",
+              "agent/configuration",
+              "agent/bigquery-integration",
+              "agent/tools-and-toolsets"
+            ]
+          },
+          {
+            "group": "Frontend",
+            "pages": [
+              "frontend/overview",
+              "frontend/copilotkit-integration",
+              "frontend/teams-integration"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/docker",
+              "deployment/cloud-run",
+              "deployment/environment-variables"
+            ]
+          },
+          {
+            "group": "Security",
+            "pages": [
+              "security/azure-ad-authentication",
+              "security/security-guardrails",
+              "security/permissions"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Backend API",
+            "pages": [
+              "api/fastapi-endpoints",
+              "api/agent-interface",
+              "api/authentication"
+            ]
+          },
+          {
+            "group": "Frontend API",
+            "pages": [
+              "api/copilotkit-endpoint",
+              "api/http-agent"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Natural language to SQL translation using Gemini 2.5 Pro",
+    "BigQuery integration with read-only security controls",
+    "FastAPI backend with Azure AD JWT authentication",
+    "Next.js frontend with CopilotKit chat interface",
+    "Microsoft Teams integration for enterprise deployment",
+    "Google Cloud Run serverless architecture",
+    "Security guardrails preventing data modification"
+  ],
+  "publicApiSurface": [
+    "LlmAgent (data_agente.agent:get_root_agent)",
+    "BigQueryToolset with read-only mode",
+    "FastAPI endpoint at / (ADK agent endpoint)",
+    "POST /api/copilotkit (CopilotKit integration)",
+    "Azure AD middleware for JWT validation",
+    "HttpAgent for frontend-backend communication"
+  ]
+}
