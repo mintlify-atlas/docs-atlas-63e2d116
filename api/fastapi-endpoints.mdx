@@ -106,18 +106,6 @@ The ADK endpoint returns agent responses in a streaming or JSON format depending
   Query results from BigQuery (when executed)
 </ResponseField>
 
-### Health Check Endpoint
-
-The health endpoint is exempt from authentication and used for container health checks.
-
-```bash
-curl https://your-backend.run.app/health
-```
-
-<Note>
-  The `/health` endpoint bypasses authentication middleware (see main.py:34)
-</Note>
-
 ### Documentation Endpoints
 
 FastAPI automatically generates interactive API documentation:
@@ -130,7 +118,11 @@ These endpoints are exempt from authentication for development purposes.
 
 ## Security Middleware
 
-All endpoints (except `/health`, `/docs`, and `/openapi.json`) are protected by the authentication middleware. See [Authentication](/api/authentication) for details.
+All endpoints (except `/docs`, `/openapi.json`, and GET requests to `/`) are protected by the authentication middleware. See [Authentication](/api/authentication) for details.
+
+<Note>
+The middleware exempts OPTIONS requests and specific paths for development and root access (see main.py:34-37).
+</Note>
 
 ## Running the Server
 

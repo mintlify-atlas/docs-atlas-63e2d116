@@ -263,10 +263,6 @@ The middleware returns a 403 Forbidden response for authentication failures:
 
 The following paths bypass authentication:
 
-<ParamField path="/health" type="GET">
-  Health check endpoint for container orchestration
-</ParamField>
-
 <ParamField path="/docs" type="GET">
   Swagger UI documentation (development only)
 </ParamField>
@@ -276,8 +272,16 @@ The following paths bypass authentication:
 </ParamField>
 
 <ParamField path="/" type="GET">
-  Root path GET requests (used for health checks)
+  Root path GET requests (bypasses auth, connects to ADK agent)
 </ParamField>
+
+<ParamField path="OPTIONS" type="OPTIONS">
+  All OPTIONS requests (CORS preflight)
+</ParamField>
+
+<Note>
+The middleware checks `request.url.path in ["/docs", "/openapi.json", "/health"]` but no `/health` endpoint is actually defined in the application. The root path `/` with GET method is exempt for the ADK agent endpoint.
+</Note>
 
 <ParamField path="*" type="OPTIONS">
   CORS preflight requests
